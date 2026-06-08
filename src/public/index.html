@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NYT Bluesky Labeler — Dashboard</title>
+  
+  <!-- Modern color-scheme declaration to prevent white flash of unthemed content -->
+  <meta name="color-scheme" content="light dark">
+  <script>
+    {
+      const theme = localStorage.getItem("theme") || "dark";
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+  </script>
+
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-glow"></div>
+        <span class="logo-emoji">📰</span>
+        <div class="brand-text">
+          <h1>NYT Labeler</h1>
+          <span class="env-badge" id="env-badge">Dev Mode</span>
+        </div>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="overview">
+          <span class="nav-icon">📊</span> Overview
+        </button>
+        <button class="nav-item" data-tab="universe">
+          <span class="nav-icon">🏷️</span> Label Universe
+        </button>
+        <button class="nav-item" data-tab="history">
+          <span class="nav-icon">📜</span> Label History
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <span class="nav-icon">⚙️</span> Settings
+        </button>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="connection-status" id="ws-status">
+          <span class="status-dot pulsing"></span> Connecting...
+        </div>
+        <div class="uptime-display">
+          Uptime: <span id="uptime-val">00:00:00</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Top Banner Warning for Dry Run -->
+      <div class="dry-run-banner hidden" id="dry-run-banner">
+        <span>⚠️ <strong>Dry-Run Mode Active:</strong> Posts are being scanned and matched locally, but labels are <u>not</u> being published to the live Bluesky network.</span>
+      </div>
+
+      <!-- Tab: Overview -->
+      <section class="tab-pane active" id="tab-overview">
+        <header class="tab-header">
+          <div>
+            <h2>Real-Time Ingestion</h2>
+            <p>Live stats and stream from the Bluesky Jetstream firehose.</p>
+          </div>
+        </header>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon purple">📥</div>
+            <div class="stat-info">
+              <h3>Posts Processed</h3>
+              <p class="stat-value" id="processed-count">0</p>
+            </div>
+            <div class="card-glow"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon pink">🔍</div>
+            <div class="stat-info">
+              <h3>NYT Links Found</h3>
+              <p class="stat-value" id="nyt-count">0</p>
+            </div>
+            <div class="card-glow"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon blue">🏷️</div>
+            <div class="stat-info">
+              <h3>Labels Emitted</h3>
+              <p class="stat-value" id="labels-count">0</p>
+            </div>
+            <div class="card-glow"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green">⚡</div>
+            <div class="stat-info">
+              <h3>Throughput</h3>
+              <p class="stat-value" id="throughput-val">0 <span class="unit">/s</span></p>
+            </div>
+            <div class="card-glow"></div>
+          </div>
+        </div>
+
+        <!-- Speed Graph & Metrics Row -->
+        <div class="dashboard-row">
+          <div class="chart-container glass">
+            <h3>Firehose Activity Graph (Posts / sec)</h3>
+            <canvas id="speed-chart" height="180"></canvas>
+          </div>
+        </div>
+
+        <!-- Terminal Log Row -->
+        <div class="dashboard-row">
+          <div class="terminal-container glass">
+            <div class="terminal-header">
+              <div class="terminal-dots">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <span class="terminal-title">LIVE EMISSION LOGS</span>
+              <button class="terminal-clear" id="clear-terminal">Clear</button>
+            </div>
+            <div class="terminal-body" id="terminal-logs">
+              <div class="terminal-line system">[SYSTEM] Dashboard socket initialized. Awaiting firehose connection...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: Label Universe -->
+      <section class="tab-pane" id="tab-universe">
+        <header class="tab-header">
+          <div>
+            <h2>Label Universe</h2>
+            <p>The registered set of sections, subsections, and authors available for tagging.</p>
+          </div>
+        </header>
+
+        <div class="universe-sections">
+          <!-- Active Opinion Authors Card -->
+          <div class="universe-card glass">
+            <div class="card-header">
+              <h3>✍️ Opinion Authors <span class="label-count" id="authors-count-badge">4</span></h3>
+              <p>Initially scoped: Authors in the "opinion" section with &gt;1 articles in the database.</p>
+            </div>
+            <div class="authors-grid" id="authors-list">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Sections & Subsections Dual Grid -->
+          <div class="category-grids">
+            <div class="universe-card glass">
+              <div class="card-header">
+                <h3>📚 Active Sections <span class="label-count" id="sections-count-badge">0</span></h3>
+              </div>
+              <div class="categories-list" id="sections-list">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+
+            <div class="universe-card glass">
+              <div class="card-header">
+                <h3>🔖 Subsections <span class="label-count" id="subsections-count-badge">0</span></h3>
+              </div>
+              <div class="categories-list" id="subsections-list">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: History -->
+      <section class="tab-pane" id="tab-history">
+        <header class="tab-header">
+          <div>
+            <h2>Emitted Labels History</h2>
+            <p>Archive of recently labeled Bluesky posts matching NYT articles.</p>
+          </div>
+          <div class="history-controls">
+            <input type="text" id="history-search" placeholder="Search posts, titles, or labels..." class="search-input">
+          </div>
+        </header>
+
+        <div class="history-table-container glass">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>NYT Article Info</th>
+                <th>Bluesky Post text</th>
+                <th>Emitted Labels</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="history-tbody">
+              <!-- Dynamically populated -->
+              <tr>
+                <td colspan="5" class="empty-state">No posts labeled yet. Connect to firehose and await activity...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab: Settings -->
+      <section class="tab-pane" id="tab-settings">
+        <header class="tab-header">
+          <div>
+            <h2>System Settings</h2>
+            <p>Manage and inspect environment and database connection variables.</p>
+          </div>
+        </header>
+
+        <div class="settings-grid">
+          <!-- ATProto Settings -->
+          <div class="settings-card glass">
+            <h3>🔑 ATProto Credentials</h3>
+            <div class="settings-form">
+              <div class="form-group">
+                <label>Active Handle</label>
+                <input type="text" id="set-handle" class="glass-input" readonly>
+              </div>
+              <div class="form-group">
+                <label>Service URL (DID Root)</label>
+                <input type="text" id="set-url" class="glass-input" readonly>
+              </div>
+              <div class="form-group">
+                <label>Did</label>
+                <input type="text" id="set-did" class="glass-input" readonly>
+              </div>
+            </div>
+          </div>
+
+          <!-- Database Settings -->
+          <div class="settings-card glass">
+            <h3>🗄️ PostgreSQL Database</h3>
+            <div class="settings-form">
+              <div class="form-group">
+                <label>Host IP / Address</label>
+                <input type="text" id="set-db-host" class="glass-input" readonly>
+              </div>
+              <div class="form-group">
+                <label>Database Name</label>
+                <input type="text" id="set-db-name" class="glass-input" readonly>
+              </div>
+              <div class="form-group">
+                <label>Connection Uptime Status</label>
+                <div class="db-status-badge">
+                  <span class="status-dot green"></span> Connected
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Dashboard Script -->
+  <script src="app.js"></script>
+</body>
+</html>

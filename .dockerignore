@@ -1,0 +1,31 @@
+# Exclude dependency directories
+node_modules/
+
+# Exclude local build output
+dist/
+
+# Exclude Git files
+.git/
+.gitignore
+
+# Exclude local environment files containing secrets
+.env
+.env.*
+
+# Exclude local SQLite databases
+labels.db
+labels.db-journal
+labels.db-shm
+labels.db-wal
+
+# Exclude documentation and project scripts
+README.md
+deploy.sh
+Dockerfile
+.dockerignore
+
+# Exclude OS files and IDE configs
+.DS_Store
+.vscode/
+.idea/
+*.log
