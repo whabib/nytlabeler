@@ -79,6 +79,7 @@ else
   APP_ENV="production"
 fi
 
+SECRET_NAME="DATABASE_URL"
 JOB_NAME="${SERVICE_NAME}-job"
 IMAGE_TAG="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
@@ -113,18 +114,10 @@ fi
 
 # Build list of environment variables for Cloud Run
 CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${DB_NAME}"
-DB_HOST="${DB_HOST_PROD}"
-if [ -z "$DIRECT_VPC" ] && [ -z "$VPC_CONNECTOR" ]; then
-  DB_HOST="/cloudsql/${CLOUDSQL_INSTANCE_CONNECTION}"
-fi
 
 ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
-ENV_VARS="${ENV_VARS},DB_NAME=${DB_NAME}"
-ENV_VARS="${ENV_VARS},DB_USER=${DB_USER}"
-ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST}"
-ENV_VARS="${ENV_VARS},DB_PASSWORD=${DB_PASSWORD:-}"
 
 # Unified ATProto credentials passed directly from local env
 ENV_VARS="${ENV_VARS},BSKY_DID=${BSKY_DID:-}"
@@ -152,6 +145,7 @@ DEPLOY_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
+  "--set-secrets" "DATABASE_URL=${SECRET_NAME}:latest"
   "--allow-unauthenticated"
 )
 
@@ -187,6 +181,7 @@ JOB_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
+  "--set-secrets" "DATABASE_URL=${SECRET_NAME}:latest"
 )
 
 # VPC / Cloud SQL connection settings for the Job

@@ -1,16 +1,11 @@
 import pg from 'pg';
-import { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME } from './config.js';
+import { DATABASE_URL } from './config.js';
 
 const { Pool } = pg;
 
 // Connection Pool
-// Note: In Cloud Run, if using Cloud SQL connection, DB_HOST can be the unix socket path like '/cloudsql/project:region:instance'
 export const pool = new Pool({
-  host: DB_HOST,
-  port: DB_PORT,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database: DB_NAME,
+  connectionString: DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
