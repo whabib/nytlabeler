@@ -14,22 +14,11 @@ export const IS_DEV = ENV === 'development';
 export const PORT = parseInt(process.env.PORT || '4100', 10);
 export const DRY_RUN = process.env.DRY_RUN === 'true';
 
-// Choose ATProto credentials based on environment
-export const DID = IS_DEV 
-  ? (process.env.DEV_DID || '') 
-  : (process.env.PROD_DID || '');
-
-export const SIGNING_KEY = IS_DEV 
-  ? (process.env.DEV_SIGNING_KEY || '') 
-  : (process.env.PROD_SIGNING_KEY || '');
-
-export const BSKY_IDENTIFIER = IS_DEV 
-  ? (process.env.DEV_BSKY_IDENTIFIER || 'nyt-labeler-dev@bsky.social') 
-  : (process.env.PROD_BSKY_IDENTIFIER || 'nyt-labeler@bsky.social');
-
-export const BSKY_PASSWORD = IS_DEV 
-  ? (process.env.DEV_BSKY_PASSWORD || '') 
-  : (process.env.PROD_BSKY_PASSWORD || '');
+// ATProto credentials (unified)
+export const DID = process.env.BSKY_DID || '';
+export const SIGNING_KEY = process.env.BSKY_SIGNING_KEY || '';
+export const BSKY_IDENTIFIER = process.env.BSKY_IDENTIFIER || '';
+export const BSKY_PASSWORD = process.env.BSKY_PASSWORD || '';
 
 export const SERVICE_URL = IS_DEV
   ? 'https://nyt-labeler-dev.warren.nyc'
@@ -54,10 +43,10 @@ export function validateConfig() {
   }
   
   const missing = [];
-  if (!DID) missing.push(IS_DEV ? 'DEV_DID' : 'PROD_DID');
-  if (!SIGNING_KEY) missing.push(IS_DEV ? 'DEV_SIGNING_KEY' : 'PROD_SIGNING_KEY');
-  if (!BSKY_IDENTIFIER) missing.push(IS_DEV ? 'DEV_BSKY_IDENTIFIER' : 'PROD_BSKY_IDENTIFIER');
-  if (!BSKY_PASSWORD) missing.push(IS_DEV ? 'DEV_BSKY_PASSWORD' : 'PROD_BSKY_PASSWORD');
+  if (!DID) missing.push('BSKY_DID');
+  if (!SIGNING_KEY) missing.push('BSKY_SIGNING_KEY');
+  if (!BSKY_IDENTIFIER) missing.push('BSKY_IDENTIFIER');
+  if (!BSKY_PASSWORD) missing.push('BSKY_PASSWORD');
 
   if (missing.length > 0) {
     console.warn(`⚠️ Warning: Missing ATProto credentials in .env: [${missing.join(', ')}]. Falling back to DRY_RUN mode.`);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # NY Times Bluesky Labeler (nytlabeler) - Deployment Script
-# Deploys the service to Google Cloud Run and maps custom domains.
+# Deploys both the long-running Service and the one-shot publisher Job to Google Cloud Run.
 #
 
 set -euo pipefail
@@ -79,12 +79,14 @@ else
   APP_ENV="production"
 fi
 
+JOB_NAME="${SERVICE_NAME}-job"
 IMAGE_TAG="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
 echo "================================================================"
 echo "🚀 Preparing deployment of NY Times Bluesky Labeler"
 echo "   Target Env   : ${TARGET_ENV} (${APP_ENV})"
 echo "   Service Name : ${SERVICE_NAME}"
+echo "   Job Name     : ${JOB_NAME}"
 echo "   Custom Domain: ${CUSTOM_DOMAIN}"
 echo "   GCP Project  : ${PROJECT_ID}"
 echo "   GCP Region   : ${REGION}"
@@ -110,29 +112,25 @@ else
 fi
 
 # Build list of environment variables for Cloud Run
+CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${DB_NAME}"
+DB_HOST="${DB_HOST_PROD}"
+if [ -z "$DIRECT_VPC" ] && [ -z "$VPC_CONNECTOR" ]; then
+  DB_HOST="/cloudsql/${CLOUDSQL_INSTANCE_CONNECTION}"
+fi
+
 ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
 ENV_VARS="${ENV_VARS},DB_NAME=${DB_NAME}"
 ENV_VARS="${ENV_VARS},DB_USER=${DB_USER}"
+ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST}"
+ENV_VARS="${ENV_VARS},DB_PASSWORD=${DB_PASSWORD:-}"
 
-# Determine DB_HOST and password
-if [ "$TARGET_ENV" = "dev" ]; then
-  # Default to localhost if dev is running locally, or VPC IP if deploying dev to Cloud Run
-  ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST_PROD}"
-  ENV_VARS="${ENV_VARS},DB_PASSWORD=${DB_PASSWORD:-}"
-  ENV_VARS="${ENV_VARS},DEV_DID=${DEV_DID:-}"
-  ENV_VARS="${ENV_VARS},DEV_SIGNING_KEY=${DEV_SIGNING_KEY:-}"
-  ENV_VARS="${ENV_VARS},DEV_BSKY_IDENTIFIER=${DEV_BSKY_IDENTIFIER:-}"
-  ENV_VARS="${ENV_VARS},DEV_BSKY_PASSWORD=${DEV_BSKY_PASSWORD:-}"
-else
-  ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST_PROD}"
-  ENV_VARS="${ENV_VARS},DB_PASSWORD=${PROD_DB_PASSWORD:-${DB_PASSWORD:-}}"
-  ENV_VARS="${ENV_VARS},PROD_DID=${PROD_DID:-}"
-  ENV_VARS="${ENV_VARS},PROD_SIGNING_KEY=${PROD_SIGNING_KEY:-}"
-  ENV_VARS="${ENV_VARS},PROD_BSKY_IDENTIFIER=${PROD_BSKY_IDENTIFIER:-}"
-  ENV_VARS="${ENV_VARS},PROD_BSKY_PASSWORD=${PROD_BSKY_PASSWORD:-}"
-fi
+# Unified ATProto credentials passed directly from local env
+ENV_VARS="${ENV_VARS},BSKY_DID=${BSKY_DID:-}"
+ENV_VARS="${ENV_VARS},BSKY_SIGNING_KEY=${BSKY_SIGNING_KEY:-}"
+ENV_VARS="${ENV_VARS},BSKY_IDENTIFIER=${BSKY_IDENTIFIER:-}"
+ENV_VARS="${ENV_VARS},BSKY_PASSWORD=${BSKY_PASSWORD:-}"
 
 # Add optional firehose parameters
 if [ -n "${FIREHOSE_URL:-}" ]; then
@@ -146,7 +144,8 @@ fi
 echo "📦 Building and uploading container image via Cloud Build..."
 gcloud builds submit --tag "${IMAGE_TAG}" .
 
-# Prepare gcloud deploy command options
+# Prepare gcloud deploy command options for the Service
+echo "🚀 Deploying Cloud Run Service: ${SERVICE_NAME}..."
 DEPLOY_FLAGS=(
   "--image" "${IMAGE_TAG}"
   "--platform" "managed"
@@ -166,11 +165,9 @@ elif [ -n "$VPC_CONNECTOR" ]; then
 else
   # Always attach Cloud SQL Auth proxy instance as a reliable alternative
   echo "🔗 Adding Cloud SQL connection proxy as a fallback integration..."
-  DEPLOY_FLAGS+=("--add-cloudsql-instances" "${PROJECT_ID}:${REGION}:${DB_NAME}")
+  DEPLOY_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
 fi
 
-# Execute Cloud Run Deployment
-echo "🚀 Deploying to Google Cloud Run..."
 gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
 
 # Map Custom Domain if supported in the region
@@ -183,8 +180,32 @@ gcloud beta run domain-mappings create \
   --project "${PROJECT_ID}" 2>/dev/null || echo "ℹ️ Custom domain mapping already exists or is managed externally."
 set -e
 
+# Prepare gcloud run jobs deploy options for the Job
+echo "🚀 Deploying Cloud Run Job: ${JOB_NAME}..."
+JOB_FLAGS=(
+  "--image" "${IMAGE_TAG}"
+  "--region" "${REGION}"
+  "--project" "${PROJECT_ID}"
+  "--set-env-vars" "${ENV_VARS}"
+)
+
+# VPC / Cloud SQL connection settings for the Job
+if [ -n "$DIRECT_VPC" ]; then
+  JOB_FLAGS+=("--vpc-network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
+elif [ -n "$VPC_CONNECTOR" ]; then
+  JOB_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
+else
+  JOB_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
+fi
+
+# Override container command to execute the taxonomy script instead of main daemon
+JOB_FLAGS+=("--command" "node" "--args" "dist/publish-definitions.js")
+
+gcloud run jobs deploy "${JOB_NAME}" "${JOB_FLAGS[@]}"
+
 echo "================================================================"
 echo "🎉 SUCCESS: Deployment to ${APP_ENV} is complete!"
 echo "🌐 Service URL : ${CUSTOM_DOMAIN}"
-echo "🤖 Make sure to update DNS records (CNAME/A records) for ${CUSTOM_DOMAIN} as instructed by Google Cloud Console."
+echo "💼 One-shot Job: ${JOB_NAME}"
+echo "🚀 Run the Job using: gcloud run jobs execute ${JOB_NAME} --region ${REGION}"
 echo "================================================================"
