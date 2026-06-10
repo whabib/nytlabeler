@@ -122,7 +122,7 @@ ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
 
-# Unified ATProto credentials passed directly from local env
+# ATProto identifiers passed from local .env (signing key + password are injected via Secret Manager)
 ENV_VARS="${ENV_VARS},BSKY_DID=${BSKY_DID:-}"
 ENV_VARS="${ENV_VARS},BSKY_IDENTIFIER=${BSKY_IDENTIFIER:-}"
 
