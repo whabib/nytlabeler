@@ -79,7 +79,6 @@ else
   APP_ENV="production"
 fi
 
-SECRET_NAME="DATABASE_URL"
 JOB_NAME="${SERVICE_NAME}-job"
 IMAGE_TAG="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
@@ -145,7 +144,7 @@ DEPLOY_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
-  "--set-secrets" "DATABASE_URL=${SECRET_NAME}:latest"
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest"
   "--allow-unauthenticated"
 )
 
@@ -181,7 +180,7 @@ JOB_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
-  "--set-secrets" "DATABASE_URL=${SECRET_NAME}:latest"
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest"
 )
 
 # VPC / Cloud SQL connection settings for the Job

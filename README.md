@@ -170,7 +170,7 @@ To ensure both the Service and Job can securely reach the PostgreSQL database, t
 * **Google Secret Manager Setup**: 
   - Create a secret named `DATABASE_URL`.
   - The secret value follows the standard PostgreSQL URI structure: `postgresql://[user[:password]@]host[:port][/dbname]`.
-  - During deployment, `deploy.sh` automatically configures Cloud Run using `--set-secrets="DATABASE_URL=${SECRET_NAME}:latest"` to securely mount the secret as the `DATABASE_URL` environment variable inside the container.
+  - During deployment, `deploy.sh` automatically configures Cloud Run using `--set-secrets="DATABASE_URL=DATABASE_URL:latest"` to securely mount the secret as the `DATABASE_URL` environment variable inside the container.
 * **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
   - **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`
   - **Serverless VPC Access**: Use `--vpc-connector <connector_name>`
