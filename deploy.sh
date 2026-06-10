@@ -119,7 +119,6 @@ fi
 CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${DB_NAME}"
 
 ENV_VARS="ENV=${APP_ENV}"
-ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
 
 # ATProto identifiers passed from local .env (signing key + password are injected via Secret Manager)
