@@ -168,9 +168,8 @@ gcloud run jobs execute nyt-labeler-job --region us-central1
 ### 3. Secret Manager & Cloud SQL Connection Settings
 To ensure both the Service and Job can securely reach the PostgreSQL database, the system uses a single, unified `DATABASE_URL` stored inside **Google Secret Manager**:
 * **Google Secret Manager Setup**: 
-  - For the **dev** environment, create a secret named `DATABASE_URL_DEV`.
-  - For the **prod** environment, create a secret named `DATABASE_URL`.
-  - The secret values should follow the standard PostgreSQL URI structure: `postgresql://[user[:password]@]host[:port][/dbname]`.
+  - Create a secret named `DATABASE_URL`.
+  - The secret value follows the standard PostgreSQL URI structure: `postgresql://[user[:password]@]host[:port][/dbname]`.
   - During deployment, `deploy.sh` automatically configures Cloud Run using `--set-secrets="DATABASE_URL=${SECRET_NAME}:latest"` to securely mount the secret as the `DATABASE_URL` environment variable inside the container.
 * **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
   - **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`

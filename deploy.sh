@@ -73,14 +73,13 @@ if [ "$TARGET_ENV" = "dev" ]; then
   SERVICE_NAME="nyt-labeler-dev"
   CUSTOM_DOMAIN="nyt-labeler-dev.warren.nyc"
   APP_ENV="development"
-  SECRET_NAME="DATABASE_URL_DEV"
 else
   SERVICE_NAME="nyt-labeler"
   CUSTOM_DOMAIN="nyt-labeler.warren.nyc"
   APP_ENV="production"
-  SECRET_NAME="DATABASE_URL"
 fi
 
+SECRET_NAME="DATABASE_URL"
 JOB_NAME="${SERVICE_NAME}-job"
 IMAGE_TAG="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
