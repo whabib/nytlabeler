@@ -112,12 +112,18 @@ else
 fi
 
 # Build list of environment variables for Cloud Run
+CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${DB_NAME}"
+DB_HOST="${DB_HOST_PROD}"
+if [ -z "$DIRECT_VPC" ] && [ -z "$VPC_CONNECTOR" ]; then
+  DB_HOST="/cloudsql/${CLOUDSQL_INSTANCE_CONNECTION}"
+fi
+
 ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
 ENV_VARS="${ENV_VARS},DB_NAME=${DB_NAME}"
 ENV_VARS="${ENV_VARS},DB_USER=${DB_USER}"
-ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST_PROD}"
+ENV_VARS="${ENV_VARS},DB_HOST=${DB_HOST}"
 ENV_VARS="${ENV_VARS},DB_PASSWORD=${DB_PASSWORD:-}"
 
 # Unified ATProto credentials passed directly from local env
@@ -159,7 +165,7 @@ elif [ -n "$VPC_CONNECTOR" ]; then
 else
   # Always attach Cloud SQL Auth proxy instance as a reliable alternative
   echo "🔗 Adding Cloud SQL connection proxy as a fallback integration..."
-  DEPLOY_FLAGS+=("--add-cloudsql-instances" "${PROJECT_ID}:${REGION}:${DB_NAME}")
+  DEPLOY_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
 fi
 
 gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
@@ -189,7 +195,7 @@ if [ -n "$DIRECT_VPC" ]; then
 elif [ -n "$VPC_CONNECTOR" ]; then
   JOB_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
 else
-  JOB_FLAGS+=("--add-cloudsql-instances" "${PROJECT_ID}:${REGION}:${DB_NAME}")
+  JOB_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
 fi
 
 # Override container command to execute the taxonomy script instead of main daemon
