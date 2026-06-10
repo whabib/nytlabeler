@@ -176,7 +176,7 @@ To maximize security, sensitive environment credentials are retrieved dynamicall
 * **Bluesky / ATProto Credentials (`BSKY_SIGNING_KEY` & `BSKY_PASSWORD`)**:
   - Create Google Secrets named `BSKY_SIGNING_KEY` and `BSKY_PASSWORD`.
   - Add secret versions with appropriate values for development and production.
-  - Apply version aliases/labels (`dev` and `prod`) to those versions.
+  - Apply version aliases (`dev` and `prod`) to those versions.
   - Mapped automatically via `--set-secrets` using the corresponding environment version alias (e.g., `BSKY_SIGNING_KEY:dev` or `BSKY_SIGNING_KEY:prod`).
 
 * **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
