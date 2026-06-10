@@ -74,7 +74,7 @@ Copy the template `.env.example` file to `.env`:
 ```bash
 cp .env.example .env
 ```
-Fill in the database credentials and ATProto credentials:
+Fill in the database connection string and ATProto credentials:
 ```ini
 # Environment Selector: 'development' or 'production'
 ENV=development
@@ -85,12 +85,8 @@ BSKY_SIGNING_KEY=your-signing-key
 BSKY_IDENTIFIER=your-account@bsky.social
 BSKY_PASSWORD=your-app-password
 
-# PostgreSQL Database Configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=nytdata
-DB_PASSWORD=your_password
-DB_NAME=nytdata
+# PostgreSQL Database Configuration (unified connection string)
+DATABASE_URL=postgresql://nytdata@localhost:5432/nytdata
 
 # Dry Run Mode (Highly recommended for development)
 # Set to 'true' to parse, query, and monitor logs, but do NOT push labels or definitions to Bluesky.
@@ -169,11 +165,17 @@ gcloud run jobs execute nyt-labeler-dev-job --region us-central1
 gcloud run jobs execute nyt-labeler-job --region us-central1
 ```
 
-### 3. VPC & Cloud SQL Settings
-To ensure both the Service and Job can securely reach the PostgreSQL instance (VPC private IP `10.73.128.3`), `deploy.sh` supports the following connectivity parameters:
-* **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`
-* **Serverless VPC Access**: Use `--vpc-connector <connector_name>`
-* **Cloud SQL Auth Proxy**: If neither network option is specified, the script automatically mounts the Cloud SQL Auth proxy instance (`--add-cloudsql-instances`) as a fallback integration, resolving sockets securely.
+### 3. Secret Manager & Cloud SQL Connection Settings
+To ensure both the Service and Job can securely reach the PostgreSQL database, the system uses a single, unified `DATABASE_URL` stored inside **Google Secret Manager**:
+* **Google Secret Manager Setup**: 
+  - For the **dev** environment, create a secret named `DATABASE_URL_DEV`.
+  - For the **prod** environment, create a secret named `DATABASE_URL`.
+  - The secret values should follow the standard PostgreSQL URI structure: `postgresql://[user[:password]@]host[:port][/dbname]`.
+  - During deployment, `deploy.sh` automatically configures Cloud Run using `--set-secrets="DATABASE_URL=${SECRET_NAME}:latest"` to securely mount the secret as the `DATABASE_URL` environment variable inside the container.
+* **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
+  - **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`
+  - **Serverless VPC Access**: Use `--vpc-connector <connector_name>`
+  - **Cloud SQL Auth Proxy fallback**: If neither network option is specified, the script automatically mounts the Cloud SQL Auth proxy instance (`--add-cloudsql-instances`) as a fallback integration, resolving sockets securely.
 
 ---
 
