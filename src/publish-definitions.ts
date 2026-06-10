@@ -111,7 +111,7 @@ async function publishDefinitions() {
     console.log('------------------------------------------------------------\n');
     console.log('⚠️ Record was NOT published. To publish to the live Bluesky network:');
     console.log('1. Ensure DRY_RUN=false in your .env file.');
-    console.log('2. Ensure DEV_DID, DEV_SIGNING_KEY, DEV_BSKY_IDENTIFIER, and DEV_BSKY_PASSWORD are set correctly.');
+    console.log('2. Ensure BSKY_DID, BSKY_SIGNING_KEY, BSKY_IDENTIFIER, and BSKY_PASSWORD are set correctly.');
     process.exit(0);
   }
 
