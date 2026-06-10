@@ -166,11 +166,19 @@ gcloud run jobs execute nyt-labeler-job --region us-central1
 ```
 
 ### 3. Secret Manager & Cloud SQL Connection Settings
-To ensure both the Service and Job can securely reach the PostgreSQL database, the system uses a single, unified `DATABASE_URL` stored inside **Google Secret Manager**:
-* **Google Secret Manager Setup**: 
-  - Create a secret named `DATABASE_URL`.
-  - The secret value follows the standard PostgreSQL URI structure: `postgresql://[user[:password]@]host[:port][/dbname]`.
-  - During deployment, `deploy.sh` automatically configures Cloud Run using `--set-secrets="DATABASE_URL=DATABASE_URL:latest"` to securely mount the secret as the `DATABASE_URL` environment variable inside the container.
+To maximize security, sensitive environment credentials are retrieved dynamically from **Google Secret Manager** during Cloud Run Service and Job startup:
+
+* **Database Connection (`DATABASE_URL`)**:
+  - Store your database URI as a secret named `DATABASE_URL` in Secret Manager.
+  - Secret format: `postgresql://[user[:password]@]host[:port][/dbname]`.
+  - Mapped automatically via `--set-secrets="DATABASE_URL=DATABASE_URL:latest"`.
+
+* **Bluesky / ATProto Credentials (`BSKY_SIGNING_KEY` & `BSKY_PASSWORD`)**:
+  - Create Google Secrets named `BSKY_SIGNING_KEY` and `BSKY_PASSWORD`.
+  - Add secret versions with appropriate values for development and production.
+  - Apply version aliases/labels (`dev` and `prod`) to those versions.
+  - Mapped automatically via `--set-secrets` using the corresponding environment version alias (e.g., `BSKY_SIGNING_KEY:dev` or `BSKY_SIGNING_KEY:prod`).
+
 * **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
   - **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`
   - **Serverless VPC Access**: Use `--vpc-connector <connector_name>`
