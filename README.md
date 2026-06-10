@@ -198,6 +198,6 @@ We exclude sensitive credentials and localized binaries using `.gitignore` and `
 
 We have configured an automated continuous integration workflow inside `.github/workflows/test.yml` that:
 * Triggers on any Push or Pull Request targetting `main` or `master`.
-* Sets up Node.js 20 environment on `ubuntu-latest`.
+* Sets up Node.js 24 environment on `ubuntu-latest`.
 * Automatically installs workspace dependencies cleanly (`npm ci`).
 * Executes the full unit test suite (`npm run test`) to verify all URL normalization, slugification, and label filtering assertions pass successfully before merge.
