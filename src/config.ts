@@ -25,11 +25,7 @@ export const SERVICE_URL = IS_DEV
   : 'https://nyt-labeler.warren.nyc';
 
 // Database config
-export const DB_HOST = process.env.DB_HOST || 'localhost';
-export const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
-export const DB_USER = process.env.DB_USER || 'nytdata';
-export const DB_PASSWORD = process.env.DB_PASSWORD || '';
-export const DB_NAME = process.env.DB_NAME || 'nytdata';
+export const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nytdata@localhost:5432/nytdata';
 
 // Jetstream Config
 export const FIREHOSE_URL = process.env.FIREHOSE_URL || 'wss://jetstream.atproto.tools/subscribe';
