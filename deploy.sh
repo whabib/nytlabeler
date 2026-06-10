@@ -152,7 +152,7 @@ DEPLOY_FLAGS=(
 # VPC Egress settings to reach private IP of Cloud SQL
 if [ -n "$DIRECT_VPC" ]; then
   echo "🔗 Configuring Direct VPC Egress (Gen 2) on network '${DIRECT_VPC}'..."
-  DEPLOY_FLAGS+=("--vpc-network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
+  DEPLOY_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
 elif [ -n "$VPC_CONNECTOR" ]; then
   echo "🔗 Configuring Serverless VPC Access Connector '${VPC_CONNECTOR}'..."
   DEPLOY_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
@@ -186,7 +186,7 @@ JOB_FLAGS=(
 
 # VPC / Cloud SQL connection settings for the Job
 if [ -n "$DIRECT_VPC" ]; then
-  JOB_FLAGS+=("--vpc-network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
+  JOB_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
 elif [ -n "$VPC_CONNECTOR" ]; then
   JOB_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
 else
