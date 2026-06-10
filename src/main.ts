@@ -1,3 +1,10 @@
+import WebSocket from 'ws';
+
+// Polyfill global WebSocket for @skyware/jetstream in Node.js environments
+if (typeof global.WebSocket === 'undefined') {
+  global.WebSocket = WebSocket as any;
+}
+
 import { validateConfig } from './config.js';
 import { loadActiveAuthors } from './labeler.js';
 import { startFirehoseListener } from './jetstream.js';
