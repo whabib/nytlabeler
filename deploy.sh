@@ -73,10 +73,14 @@ if [ "$TARGET_ENV" = "dev" ]; then
   SERVICE_NAME="nyt-labeler-dev"
   CUSTOM_DOMAIN="nyt-labeler-dev.warren.nyc"
   APP_ENV="development"
+  BSKY_SIGNING_KEY_VERSION="dev"
+  BSKY_PASSWORD_VERSION="dev"
 else
   SERVICE_NAME="nyt-labeler"
   CUSTOM_DOMAIN="nyt-labeler.warren.nyc"
   APP_ENV="production"
+  BSKY_SIGNING_KEY_VERSION="prod"
+  BSKY_PASSWORD_VERSION="prod"
 fi
 
 JOB_NAME="${SERVICE_NAME}-job"
@@ -118,11 +122,9 @@ ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},PORT=8080"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"
 
-# Unified ATProto credentials passed directly from local env
+# ATProto identifiers passed from local .env (signing key + password are injected via Secret Manager)
 ENV_VARS="${ENV_VARS},BSKY_DID=${BSKY_DID:-}"
-ENV_VARS="${ENV_VARS},BSKY_SIGNING_KEY=${BSKY_SIGNING_KEY:-}"
 ENV_VARS="${ENV_VARS},BSKY_IDENTIFIER=${BSKY_IDENTIFIER:-}"
-ENV_VARS="${ENV_VARS},BSKY_PASSWORD=${BSKY_PASSWORD:-}"
 
 # Add optional firehose parameters
 if [ -n "${FIREHOSE_URL:-}" ]; then
@@ -144,7 +146,7 @@ DEPLOY_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
-  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest"
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
   "--allow-unauthenticated"
 )
 
@@ -180,7 +182,7 @@ JOB_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
-  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest"
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
 )
 
 # VPC / Cloud SQL connection settings for the Job
