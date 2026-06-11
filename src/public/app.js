@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let ws;
   let recentLabels = [];
   let lastEventTimeStr = null;
+  let isToggling = false;
   const maxConsoleLines = 50;
 
   // Stats DOM Elements
@@ -168,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
       diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
     }
 
-    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean') {
+    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling) {
       diagSwitchEl.checked = stats.firehoseEnabled;
     }
 
@@ -473,6 +474,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Handle Feed Listener Toggle Switch
   if (diagSwitchEl) {
     diagSwitchEl.addEventListener('change', async () => {
+      if (isToggling) return;
+      isToggling = true;
+      diagSwitchEl.disabled = true;
       const enabled = diagSwitchEl.checked;
       try {
         const response = await fetch('/api/firehose/toggle', {
@@ -487,10 +491,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const data = await response.json();
         console.log(`📡 [TOGGLE] Feed listener set to ${data.firehoseEnabled ? 'ENABLED' : 'DISABLED'}`);
+        diagSwitchEl.checked = data.firehoseEnabled;
       } catch (err) {
         console.error('❌ Failed to toggle Feed Listener:', err);
         // Revert switch position in case of error
         diagSwitchEl.checked = !enabled;
+      } finally {
+        isToggling = false;
+        diagSwitchEl.disabled = false;
       }
     });
   }
