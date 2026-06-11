@@ -28,7 +28,7 @@ export const SERVICE_URL = IS_DEV
 export const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nytdata@localhost:5432/nytdata';
 
 // Jetstream Config
-export const FIREHOSE_URL = process.env.FIREHOSE_URL || 'wss://jetstream.atproto.tools/subscribe';
+export const FIREHOSE_URL = process.env.FIREHOSE_URL || 'wss://jetstream1.us-east.bsky.network/subscribe';
 export const WANTED_COLLECTION = process.env.WANTED_COLLECTION || 'app.bsky.feed.post';
 
 // Validation helper
