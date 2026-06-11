@@ -154,7 +154,7 @@ function connect() {
               console.log(`🫙 [NO DB MATCH] URL not found in database: ${url}`);
             }
           } catch (err) {
-            console.error(`❌ Error processing link ${url} for post ${postUri}:`, err);
+            console.error('❌ Error processing link %s for post %s:', url, postUri, err);
           }
         }
       }
