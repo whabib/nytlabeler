@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let recentLabels = [];
   let lastEventTimeStr = null;
   let isToggling = false;
+  let lastToggleTime = 0; // Cooldown to prevent race conditions with in-flight heartbeats
   const maxConsoleLines = 50;
 
   // Stats DOM Elements
@@ -169,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
       diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
     }
 
-    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling) {
+    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling && (Date.now() - lastToggleTime > 3000)) {
       diagSwitchEl.checked = stats.firehoseEnabled;
     }
 
@@ -476,31 +477,57 @@ document.addEventListener('DOMContentLoaded', () => {
     diagSwitchEl.addEventListener('change', async () => {
       if (isToggling) return;
       isToggling = true;
+      lastToggleTime = Date.now();
       diagSwitchEl.disabled = true;
       const enabled = diagSwitchEl.checked;
-      try {
-        const response = await fetch('/api/firehose/toggle', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ enabled }),
-        });
-        if (!response.ok) {
-          throw new Error('Failed to toggle Jetstream listener');
+
+      // If WebSocket is open, toggle deterministically over WebSocket (targets current container instance)
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'toggle', enabled }));
+          console.log(`📡 Sent toggle command via WebSocket: ${enabled ? 'ENABLE' : 'DISABLE'}`);
+        } catch (err) {
+          console.error('❌ Failed to send toggle over WebSocket, falling back to HTTP POST:', err);
+          await toggleViaHttp(enabled);
+        } finally {
+          // Keep a brief lock to let transition messages settle, then release input
+          setTimeout(() => {
+            isToggling = false;
+            diagSwitchEl.disabled = false;
+            lastToggleTime = Date.now(); // Extend/reset cooldown
+          }, 800);
         }
-        const data = await response.json();
-        console.log(`📡 [TOGGLE] Feed listener set to ${data.firehoseEnabled ? 'ENABLED' : 'DISABLED'}`);
-        diagSwitchEl.checked = data.firehoseEnabled;
-      } catch (err) {
-        console.error('❌ Failed to toggle Feed Listener:', err);
-        // Revert switch position in case of error
-        diagSwitchEl.checked = !enabled;
-      } finally {
-        isToggling = false;
-        diagSwitchEl.disabled = false;
+      } else {
+        // Fall back to HTTP POST if WebSocket is disconnected
+        console.warn('⚠️ WebSocket not connected. Falling back to HTTP POST for toggle.');
+        await toggleViaHttp(enabled);
       }
     });
+  }
+
+  async function toggleViaHttp(enabled) {
+    try {
+      const response = await fetch('/api/firehose/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to toggle Jetstream listener');
+      }
+      const data = await response.json();
+      console.log(`📡 [TOGGLE] Feed listener set to ${data.firehoseEnabled ? 'ENABLED' : 'DISABLED'}`);
+      diagSwitchEl.checked = data.firehoseEnabled;
+    } catch (err) {
+      console.error('❌ Failed to toggle Feed Listener via HTTP:', err);
+      diagSwitchEl.checked = !enabled; // Revert
+    } finally {
+      isToggling = false;
+      diagSwitchEl.disabled = false;
+      lastToggleTime = Date.now(); // Extend/reset cooldown
+    }
   }
 
   // Bootstrap Dashboard

@@ -27,6 +27,23 @@ wss.on('connection', (ws) => {
   // Send initial stats on connection
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
 
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (data.type === 'toggle') {
+        const { enabled } = data;
+        if (enabled === true) {
+          startFirehoseListener();
+        } else if (enabled === false) {
+          stopFirehoseListener();
+        }
+        broadcastStats();
+      }
+    } catch (err) {
+      console.error('❌ Failed to process WS message from dashboard:', err);
+    }
+  });
+
   ws.on('close', () => {
     clients.delete(ws);
     console.log(`🔌 Dashboard client disconnected (Total: ${clients.size})`);
@@ -59,7 +76,11 @@ global.broadcastLog = (logEntry: IssuedLabelLog) => {
 
 // Periodic stats heartbeat (every 1 second)
 let lastProcessed = 0;
-setInterval(() => {
+
+/**
+ * Broadcasts the current stats to all active WebSocket clients.
+ */
+export function broadcastStats() {
   const currentProcessed = stats.postsProcessed;
   const throughput = currentProcessed - lastProcessed;
   lastProcessed = currentProcessed;
@@ -78,6 +99,10 @@ setInterval(() => {
       client.send(heartbeat);
     }
   }
+}
+
+setInterval(() => {
+  broadcastStats();
 }, 1000);
 
 // Parse JSON payloads
@@ -100,9 +125,11 @@ app.post('/api/firehose/toggle', (req, res) => {
   const { enabled } = req.body;
   if (enabled === true) {
     startFirehoseListener();
+    broadcastStats();
     res.json({ success: true, firehoseEnabled: true });
   } else if (enabled === false) {
     stopFirehoseListener();
+    broadcastStats();
     res.json({ success: true, firehoseEnabled: false });
   } else {
     res.status(400).json({ error: "Invalid 'enabled' value. Must be a boolean." });
