@@ -115,10 +115,34 @@
         </div>
 
         <!-- Speed Graph & Metrics Row -->
-        <div class="dashboard-row">
+        <div class="dashboard-row diagnostics-row">
           <div class="chart-container glass">
             <h3>Firehose Activity Graph (Posts / sec)</h3>
             <canvas id="speed-chart" height="180"></canvas>
+          </div>
+          
+          <div class="diagnostics-panel glass">
+            <h3>📡 Stream Diagnostics</h3>
+            <div class="diag-list">
+              <div class="diag-item">
+                <span class="diag-label">Stream Status</span>
+                <span id="diag-status" class="diag-value offline">
+                  <span class="status-dot red pulsing"></span> Offline
+                </span>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">Active Endpoint</span>
+                <span id="diag-endpoint" class="diag-value code-value">-</span>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">Last Post Received</span>
+                <span id="diag-last-time" class="diag-value">-</span>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">Auto-Reconnects</span>
+                <span id="diag-reconnects" class="diag-value">0</span>
+              </div>
+            </div>
           </div>
         </div>
 

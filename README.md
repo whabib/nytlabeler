@@ -8,7 +8,7 @@ It includes a beautiful, real-time glassmorphic monitoring dashboard and a autom
 
 ## ✨ Features
 
-* **Real-time Firehose Tracking**: Uses `@skyware/jetstream` to consume post creations on the Bluesky network with minimal latency.
+* **Real-time Firehose Tracking**: Uses a native JSON-over-WebSocket subscriber to Jetstream public endpoints to consume post creations with maximum resiliency.
 * **Precise Match Engine**: Sanitizes/normalizes URLs to match canonical database storage and joins articles with authors.
 * **Refined Taxonomy Scope**:
   * Emits raw section and subsection labels cleanly with no prefixes (e.g., `travel`, `review`).
@@ -22,7 +22,7 @@ It includes a beautiful, real-time glassmorphic monitoring dashboard and a autom
 ## 🛠️ Tech Stack
 
 * **Language**: TypeScript (ESM, Target: ES2022)
-* **ATProto Integration**: `@skyware/labeler`, `@skyware/jetstream`, `@atproto/api`
+* **ATProto Integration**: `@skyware/labeler`, `@atproto/api`
 * **Web Server**: Express, `ws` (WebSockets)
 * **Database Client**: `pg` (PostgreSQL connection pool)
 * **Runtime / Compiler**: `tsx` (TypeScript Execute), `typescript`

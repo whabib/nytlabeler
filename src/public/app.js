@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Active Connection variables
   let ws;
   let recentLabels = [];
+  let lastEventTimeStr = null;
   const maxConsoleLines = 50;
 
   // Stats DOM Elements
@@ -40,6 +41,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const wsStatusEl = document.getElementById('ws-status');
   const envBadgeEl = document.getElementById('env-badge');
   const dryRunBannerEl = document.getElementById('dry-run-banner');
+
+  // Stream Diagnostics DOM Elements
+  const diagStatusEl = document.getElementById('diag-status');
+  const diagEndpointEl = document.getElementById('diag-endpoint');
+  const diagLastTimeEl = document.getElementById('diag-last-time');
+  const diagReconnectsEl = document.getElementById('diag-reconnects');
 
   // Terminal DOM Elements
   const terminalLogsEl = document.getElementById('terminal-logs');
@@ -149,6 +156,39 @@ document.addEventListener('DOMContentLoaded', () => {
     if (processedEl) processedEl.textContent = stats.postsProcessed.toLocaleString();
     if (nytEl) nytEl.textContent = stats.nytLinksDetected.toLocaleString();
     if (labelsEl) labelsEl.textContent = stats.labelsEmitted.toLocaleString();
+
+    // Update Stream Diagnostics
+    if (stats.lastEventTime) {
+      lastEventTimeStr = stats.lastEventTime;
+      updateRelativeTime();
+    }
+
+    if (diagReconnectsEl && typeof stats.reconnectCount === 'number') {
+      diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
+    }
+
+    if (diagEndpointEl && stats.activeEndpoint) {
+      try {
+        const url = new URL(stats.activeEndpoint);
+        diagEndpointEl.textContent = url.host;
+        diagEndpointEl.title = stats.activeEndpoint; // Full URL on hover
+      } catch {
+        diagEndpointEl.textContent = stats.activeEndpoint;
+      }
+    }
+
+    if (diagStatusEl) {
+      if (stats.firehoseConnected) {
+        diagStatusEl.innerHTML = '<span class="status-dot green pulsing"></span> Online';
+        diagStatusEl.className = 'diag-value online';
+      } else if (stats.reconnectCount > 0) {
+        diagStatusEl.innerHTML = '<span class="status-dot yellow pulsing"></span> Connecting';
+        diagStatusEl.className = 'diag-value connecting';
+      } else {
+        diagStatusEl.innerHTML = '<span class="status-dot red pulsing"></span> Offline';
+        diagStatusEl.className = 'diag-value offline';
+      }
+    }
   }
 
   // Logs append helper
@@ -396,6 +436,29 @@ document.addEventListener('DOMContentLoaded', () => {
       renderHistory(e.target.value);
     });
   }
+
+  // Update relative time for last post received
+  function updateRelativeTime() {
+    if (!diagLastTimeEl) return;
+    if (!lastEventTimeStr) {
+      diagLastTimeEl.textContent = 'Never';
+      return;
+    }
+    const diffMs = Date.now() - new Date(lastEventTimeStr).getTime();
+    const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
+    
+    if (diffSecs < 60) {
+      diagLastTimeEl.textContent = `${diffSecs}s ago`;
+    } else {
+      const diffMins = Math.floor(diffSecs / 60);
+      diagLastTimeEl.textContent = `${diffMins}m ${diffSecs % 60}s ago`;
+    }
+  }
+
+  // Local interval to update ticking timestamps
+  setInterval(() => {
+    updateRelativeTime();
+  }, 1000);
 
   // Bootstrap Dashboard
   connectWebSocket();
