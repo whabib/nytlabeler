@@ -93,6 +93,11 @@ function resetWatchdog() {
  * Connects to the Jetstream firehose endpoint and subscribes to commits.
  */
 function connect() {
+  if (!stats.firehoseEnabled) {
+    console.log('🔌 Skipped connection because Jetstream listener is disabled.');
+    return;
+  }
+
   const url = new URL(FIREHOSE_URL);
   if (!url.searchParams.has('wantedCollections')) {
     url.searchParams.set('wantedCollections', WANTED_COLLECTION);
@@ -187,6 +192,11 @@ function handleDisconnect() {
     watchdogTimeout = null;
   }
 
+  if (!stats.firehoseEnabled) {
+    console.log('🔌 Jetstream listener disabled. Skipping reconnection.');
+    return;
+  }
+
   // Calculate exponential backoff delay with 25% random jitter
   const jitter = Math.random() * 0.25 * reconnectDelay;
   const delay = reconnectDelay + jitter;
@@ -204,5 +214,37 @@ function handleDisconnect() {
  * Starts the Jetstream listener subscribing to the live Bluesky firehose.
  */
 export function startFirehoseListener() {
-  connect();
+  stats.firehoseEnabled = true;
+  reconnectDelay = 1000;
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+    connect();
+  }
+}
+
+/**
+ * Stops the Jetstream listener and closes any active connections.
+ */
+export function stopFirehoseListener() {
+  stats.firehoseEnabled = false;
+  stats.firehoseConnected = false;
+
+  if (watchdogTimeout) {
+    clearTimeout(watchdogTimeout);
+    watchdogTimeout = null;
+  }
+
+  if (socket) {
+    // Remove listeners to avoid triggering of handleDisconnect on intentional close
+    socket.removeAllListeners('close');
+    socket.removeAllListeners('error');
+
+    try {
+      socket.close();
+    } catch (err) {
+      console.error('❌ Error closing Jetstream socket:', err);
+    }
+    socket = null;
+  }
+
+  console.log('🛑 Jetstream listener successfully stopped!');
 }

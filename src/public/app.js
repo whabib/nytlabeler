@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const diagEndpointEl = document.getElementById('diag-endpoint');
   const diagLastTimeEl = document.getElementById('diag-last-time');
   const diagReconnectsEl = document.getElementById('diag-reconnects');
+  const diagSwitchEl = document.getElementById('diag-switch');
 
   // Terminal DOM Elements
   const terminalLogsEl = document.getElementById('terminal-logs');
@@ -165,6 +166,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (diagReconnectsEl && typeof stats.reconnectCount === 'number') {
       diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
+    }
+
+    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean') {
+      diagSwitchEl.checked = stats.firehoseEnabled;
     }
 
     if (diagEndpointEl && stats.activeEndpoint) {
@@ -464,6 +469,31 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => {
     updateRelativeTime();
   }, 1000);
+
+  // Handle Feed Listener Toggle Switch
+  if (diagSwitchEl) {
+    diagSwitchEl.addEventListener('change', async () => {
+      const enabled = diagSwitchEl.checked;
+      try {
+        const response = await fetch('/api/firehose/toggle', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled }),
+        });
+        if (!response.ok) {
+          throw new Error('Failed to toggle Jetstream listener');
+        }
+        const data = await response.json();
+        console.log(`📡 [TOGGLE] Feed listener set to ${data.firehoseEnabled ? 'ENABLED' : 'DISABLED'}`);
+      } catch (err) {
+        console.error('❌ Failed to toggle Feed Listener:', err);
+        // Revert switch position in case of error
+        diagSwitchEl.checked = !enabled;
+      }
+    });
+  }
 
   // Bootstrap Dashboard
   connectWebSocket();

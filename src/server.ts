@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
 import { recentLabels, stats, IssuedLabelLog } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories } from './database.js';
+import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,6 +94,19 @@ app.get('/api/stats', (req, res) => {
     did: DID,
     bskyIdentifier: BSKY_IDENTIFIER
   });
+});
+
+app.post('/api/firehose/toggle', (req, res) => {
+  const { enabled } = req.body;
+  if (enabled === true) {
+    startFirehoseListener();
+    res.json({ success: true, firehoseEnabled: true });
+  } else if (enabled === false) {
+    stopFirehoseListener();
+    res.json({ success: true, firehoseEnabled: false });
+  } else {
+    res.status(400).json({ error: "Invalid 'enabled' value. Must be a boolean." });
+  }
 });
 
 app.get('/api/history', (req, res) => {
