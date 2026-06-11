@@ -169,6 +169,11 @@ function connect() {
 
   socket.on('error', (error) => {
     console.error('❌ Jetstream client socket error:', error.message || error);
+
+    // Ensure we reconnect even if the error does not lead to a 'close' event.
+    if (socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
+      socket.terminate();
+    }
   });
 }
 
