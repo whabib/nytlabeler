@@ -76,20 +76,23 @@ global.broadcastLog = (logEntry: IssuedLabelLog) => {
 
 // Periodic stats heartbeat (every 1 second)
 let lastProcessed = 0;
+let lastThroughput = 0;
 
 /**
  * Broadcasts the current stats to all active WebSocket clients.
  */
-export function broadcastStats() {
-  const currentProcessed = stats.postsProcessed;
-  const throughput = currentProcessed - lastProcessed;
-  lastProcessed = currentProcessed;
+export function broadcastStats(updateThroughputWindow = false) {
+  if (updateThroughputWindow) {
+    const currentProcessed = stats.postsProcessed;
+    lastThroughput = currentProcessed - lastProcessed;
+    lastProcessed = currentProcessed;
+  }
 
   const heartbeat = JSON.stringify({
     type: 'heartbeat',
     stats: {
       ...stats,
-      throughput,
+      throughput: lastThroughput,
       uptime: Math.floor((Date.now() - new Date(stats.startTime).getTime()) / 1000),
     }
   });
@@ -102,7 +105,7 @@ export function broadcastStats() {
 }
 
 setInterval(() => {
-  broadcastStats();
+  broadcastStats(true);
 }, 1000);
 
 // Parse JSON payloads
