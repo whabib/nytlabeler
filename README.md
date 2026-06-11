@@ -82,7 +82,7 @@ ENV=development
 # ATProto Credentials
 BSKY_DID=did:plc:your-did
 BSKY_SIGNING_KEY=your-signing-key
-BSKY_IDENTIFIER=your-account@bsky.social
+BSKY_IDENTIFIER=your-account.bsky.social
 BSKY_PASSWORD=your-app-password
 
 # PostgreSQL Database Configuration (unified connection string)
