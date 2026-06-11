@@ -20,12 +20,49 @@ export const wss = new WebSocketServer({ noServer: true });
 // Track active WebSocket clients
 const clients = new Set<WebSocket>();
 
-wss.on('connection', (ws) => {
+function isSameOriginRequest(request: http.IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+
+  if (!origin || !host) {
+    return false;
+  }
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+wss.on('connection', (ws, request) => {
   clients.add(ws);
   console.log(`🔌 Dashboard client connected (Total: ${clients.size})`);
+  const canToggleFirehose = isSameOriginRequest(request);
 
   // Send initial stats on connection
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (data.type === 'toggle') {
+        if (!canToggleFirehose) {
+          console.warn('⚠️ Ignoring unauthorized WS toggle request from non same-origin client');
+          return;
+        }
+        const { enabled } = data;
+        if (enabled === true) {
+          startFirehoseListener();
+        } else if (enabled === false) {
+          stopFirehoseListener();
+        }
+        broadcastStats();
+      }
+    } catch (err) {
+      console.error('❌ Failed to process WS message from dashboard:', err);
+    }
+  });
 
   ws.on('close', () => {
     clients.delete(ws);
@@ -59,16 +96,23 @@ global.broadcastLog = (logEntry: IssuedLabelLog) => {
 
 // Periodic stats heartbeat (every 1 second)
 let lastProcessed = 0;
-setInterval(() => {
-  const currentProcessed = stats.postsProcessed;
-  const throughput = currentProcessed - lastProcessed;
-  lastProcessed = currentProcessed;
+let lastThroughput = 0;
+
+/**
+ * Broadcasts the current stats to all active WebSocket clients.
+ */
+export function broadcastStats(updateThroughputWindow = false) {
+  if (updateThroughputWindow) {
+    const currentProcessed = stats.postsProcessed;
+    lastThroughput = currentProcessed - lastProcessed;
+    lastProcessed = currentProcessed;
+  }
 
   const heartbeat = JSON.stringify({
     type: 'heartbeat',
     stats: {
       ...stats,
-      throughput,
+      throughput: lastThroughput,
       uptime: Math.floor((Date.now() - new Date(stats.startTime).getTime()) / 1000),
     }
   });
@@ -78,6 +122,10 @@ setInterval(() => {
       client.send(heartbeat);
     }
   }
+}
+
+setInterval(() => {
+  broadcastStats(true);
 }, 1000);
 
 // Parse JSON payloads
@@ -100,9 +148,11 @@ app.post('/api/firehose/toggle', (req, res) => {
   const { enabled } = req.body;
   if (enabled === true) {
     startFirehoseListener();
+    broadcastStats();
     res.json({ success: true, firehoseEnabled: true });
   } else if (enabled === false) {
     stopFirehoseListener();
+    broadcastStats();
     res.json({ success: true, firehoseEnabled: false });
   } else {
     res.status(400).json({ error: "Invalid 'enabled' value. Must be a boolean." });

@@ -147,6 +147,9 @@ DEPLOY_FLAGS=(
   "--set-env-vars" "${ENV_VARS}"
   "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
   "--allow-unauthenticated"
+  "--max-instances" "1"
+  "--cpu" "2"
+  "--memory" "1Gi"
 )
 
 # VPC Egress settings to reach private IP of Cloud SQL
