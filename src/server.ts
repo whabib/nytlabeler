@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT, DRY_RUN, ENV, SERVICE_URL } from './config.js';
+import { PORT, DRY_RUN, ENV, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
 import { recentLabels, stats, IssuedLabelLog } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories } from './database.js';
 
@@ -89,7 +89,8 @@ app.get('/api/stats', (req, res) => {
     uptime: Math.floor((Date.now() - new Date(stats.startTime).getTime()) / 1000),
     env: ENV,
     dryRun: DRY_RUN,
-    serviceUrl: SERVICE_URL
+    serviceUrl: SERVICE_URL,
+    bskyIdentifier: BSKY_IDENTIFIER
   });
 });
 
