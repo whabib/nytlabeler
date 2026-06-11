@@ -444,7 +444,12 @@ document.addEventListener('DOMContentLoaded', () => {
       diagLastTimeEl.textContent = 'Never';
       return;
     }
-    const diffMs = Date.now() - new Date(lastEventTimeStr).getTime();
+    const ts = Date.parse(lastEventTimeStr);
+    if (!Number.isFinite(ts)) {
+      diagLastTimeEl.textContent = '-';
+      return;
+    }
+    const diffMs = Date.now() - ts;
     const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
     
     if (diffSecs < 60) {
