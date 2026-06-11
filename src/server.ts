@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT, DRY_RUN, ENV, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
+import { PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
 import { recentLabels, stats, IssuedLabelLog } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories } from './database.js';
 
@@ -22,7 +22,7 @@ const clients = new Set<WebSocket>();
 wss.on('connection', (ws) => {
   clients.add(ws);
   console.log(`🔌 Dashboard client connected (Total: ${clients.size})`);
-  
+
   // Send initial stats on connection
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
 
@@ -90,6 +90,7 @@ app.get('/api/stats', (req, res) => {
     env: ENV,
     dryRun: DRY_RUN,
     serviceUrl: SERVICE_URL,
+    did: DID,
     bskyIdentifier: BSKY_IDENTIFIER
   });
 });
