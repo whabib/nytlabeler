@@ -301,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else dryRunBannerEl.classList.add('hidden');
       }
 
-      if (setHandle) setHandle.value = config.dryRun ? 'nyt-labeler-dev@bsky.social (Dry-Run)' : (config.bskyIdentifier || 'Unknown Handle');
+      if (setHandle) setHandle.value = config.dryRun ? 'nyt-labeler-dev.bsky.social (Dry-Run)' : (config.bskyIdentifier || 'Unknown Handle');
       if (setUrl) setUrl.value = config.serviceUrl;
       if (setDid) setDid.value = config.did || 'dry_run_unbound_did';
       if (setDbHost) setDbHost.value = config.dbHost || 'localhost';
