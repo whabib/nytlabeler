@@ -20,9 +20,25 @@ export const wss = new WebSocketServer({ noServer: true });
 // Track active WebSocket clients
 const clients = new Set<WebSocket>();
 
-wss.on('connection', (ws) => {
+function isSameOriginRequest(request: http.IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+
+  if (!origin || !host) {
+    return false;
+  }
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+wss.on('connection', (ws, request) => {
   clients.add(ws);
   console.log(`🔌 Dashboard client connected (Total: ${clients.size})`);
+  const canToggleFirehose = isSameOriginRequest(request);
 
   // Send initial stats on connection
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
@@ -31,6 +47,10 @@ wss.on('connection', (ws) => {
     try {
       const data = JSON.parse(message.toString());
       if (data.type === 'toggle') {
+        if (!canToggleFirehose) {
+          console.warn('⚠️ Ignoring unauthorized WS toggle request from non same-origin client');
+          return;
+        }
         const { enabled } = data;
         if (enabled === true) {
           startFirehoseListener();
