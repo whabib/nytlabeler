@@ -373,6 +373,92 @@ body {
   margin-bottom: 32px;
 }
 
+.diagnostics-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .diagnostics-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.diagnostics-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.diagnostics-panel h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: var(--text-secondary);
+}
+
+.diag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex-grow: 1;
+  justify-content: center;
+}
+
+.diag-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.diag-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.diag-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.diag-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diag-value.code-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diag-value.online {
+  color: var(--neon-green);
+}
+
+.diag-value.connecting {
+  color: var(--neon-yellow);
+}
+
+.diag-value.offline {
+  color: var(--neon-red);
+}
+
 .chart-container h3 {
   font-size: 1rem;
   font-weight: 600;
@@ -768,4 +854,59 @@ body {
 @keyframes slideInDown {
   from { transform: translateY(-10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* Custom CSS Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  transition: .3s;
+  border-radius: 24px;
+  border: 1px solid var(--border-color);
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  transition: .3s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: rgba(138, 92, 246, 0.25);
+  border-color: rgba(138, 92, 246, 0.5);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+  background-color: var(--neon-purple);
+  box-shadow: 0 0 8px var(--neon-purple);
+}
+
+input:disabled + .slider {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

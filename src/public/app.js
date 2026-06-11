@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Active Connection variables
   let ws;
   let recentLabels = [];
+  let lastEventTimeStr = null;
   const maxConsoleLines = 50;
 
   // Stats DOM Elements
@@ -40,6 +41,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const wsStatusEl = document.getElementById('ws-status');
   const envBadgeEl = document.getElementById('env-badge');
   const dryRunBannerEl = document.getElementById('dry-run-banner');
+
+  // Stream Diagnostics DOM Elements
+  const diagStatusEl = document.getElementById('diag-status');
+  const diagEndpointEl = document.getElementById('diag-endpoint');
+  const diagLastTimeEl = document.getElementById('diag-last-time');
+  const diagReconnectsEl = document.getElementById('diag-reconnects');
+  const diagSwitchEl = document.getElementById('diag-switch');
 
   // Terminal DOM Elements
   const terminalLogsEl = document.getElementById('terminal-logs');
@@ -149,6 +157,43 @@ document.addEventListener('DOMContentLoaded', () => {
     if (processedEl) processedEl.textContent = stats.postsProcessed.toLocaleString();
     if (nytEl) nytEl.textContent = stats.nytLinksDetected.toLocaleString();
     if (labelsEl) labelsEl.textContent = stats.labelsEmitted.toLocaleString();
+
+    // Update Stream Diagnostics
+    if (stats.lastEventTime) {
+      lastEventTimeStr = stats.lastEventTime;
+      updateRelativeTime();
+    }
+
+    if (diagReconnectsEl && typeof stats.reconnectCount === 'number') {
+      diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
+    }
+
+    if (diagSwitchEl && typeof stats.firehoseEnabled === 'boolean') {
+      diagSwitchEl.checked = stats.firehoseEnabled;
+    }
+
+    if (diagEndpointEl && stats.activeEndpoint) {
+      try {
+        const url = new URL(stats.activeEndpoint);
+        diagEndpointEl.textContent = url.host;
+        diagEndpointEl.title = stats.activeEndpoint; // Full URL on hover
+      } catch {
+        diagEndpointEl.textContent = stats.activeEndpoint;
+      }
+    }
+
+    if (diagStatusEl) {
+      if (stats.firehoseConnected) {
+        diagStatusEl.innerHTML = '<span class="status-dot green pulsing"></span> Online';
+        diagStatusEl.className = 'diag-value online';
+      } else if (stats.reconnectCount > 0) {
+        diagStatusEl.innerHTML = '<span class="status-dot yellow pulsing"></span> Connecting';
+        diagStatusEl.className = 'diag-value connecting';
+      } else {
+        diagStatusEl.innerHTML = '<span class="status-dot red pulsing"></span> Offline';
+        diagStatusEl.className = 'diag-value offline';
+      }
+    }
   }
 
   // Logs append helper
@@ -394,6 +439,59 @@ document.addEventListener('DOMContentLoaded', () => {
   if (historySearch) {
     historySearch.addEventListener('input', (e) => {
       renderHistory(e.target.value);
+    });
+  }
+
+  // Update relative time for last post received
+  function updateRelativeTime() {
+    if (!diagLastTimeEl) return;
+    if (!lastEventTimeStr) {
+      diagLastTimeEl.textContent = 'Never';
+      return;
+    }
+    const ts = Date.parse(lastEventTimeStr);
+    if (!Number.isFinite(ts)) {
+      diagLastTimeEl.textContent = '-';
+      return;
+    }
+    const diffMs = Date.now() - ts;
+    const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
+    
+    if (diffSecs < 60) {
+      diagLastTimeEl.textContent = `${diffSecs}s ago`;
+    } else {
+      const diffMins = Math.floor(diffSecs / 60);
+      diagLastTimeEl.textContent = `${diffMins}m ${diffSecs % 60}s ago`;
+    }
+  }
+
+  // Local interval to update ticking timestamps
+  setInterval(() => {
+    updateRelativeTime();
+  }, 1000);
+
+  // Handle Feed Listener Toggle Switch
+  if (diagSwitchEl) {
+    diagSwitchEl.addEventListener('change', async () => {
+      const enabled = diagSwitchEl.checked;
+      try {
+        const response = await fetch('/api/firehose/toggle', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled }),
+        });
+        if (!response.ok) {
+          throw new Error('Failed to toggle Jetstream listener');
+        }
+        const data = await response.json();
+        console.log(`📡 [TOGGLE] Feed listener set to ${data.firehoseEnabled ? 'ENABLED' : 'DISABLED'}`);
+      } catch (err) {
+        console.error('❌ Failed to toggle Feed Listener:', err);
+        // Revert switch position in case of error
+        diagSwitchEl.checked = !enabled;
+      }
     });
   }
 

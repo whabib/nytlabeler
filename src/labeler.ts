@@ -20,6 +20,11 @@ export const stats = {
   nytLinksDetected: 0,
   labelsEmitted: 0,
   startTime: new Date().toISOString(),
+  firehoseConnected: false,
+  lastEventTime: null as string | null,
+  reconnectCount: 0,
+  activeEndpoint: '',
+  firehoseEnabled: true,
 };
 
 // Set of active opinion author slugs to filter which author labels we publish
