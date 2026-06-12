@@ -81,6 +81,11 @@ server.on('upgrade', (request, socket, head) => {
       wss.emit('connection', ws, request);
     });
   } else if (pathname.startsWith('/xrpc/')) {
+    if (!labelerServer) {
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     console.log(`🔀 Proxying WebSocket upgrade for ${pathname} to LabelerServer on port ${LABELER_PORT}`);
     const targetSocket = net.connect(LABELER_PORT, '127.0.0.1', () => {
       let rawRequest = `${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`;
@@ -165,9 +170,13 @@ setInterval(() => {
 
 // Proxy HTTP requests to com.atproto.label (XRPC) to Fastify LabelerServer on LABELER_PORT
 app.use('/xrpc', (req, res) => {
+  if (!labelerServer) {
+    res.status(503).send('LabelerServer not initialized');
+    return;
+  }
+
   const targetUrl = `http://127.0.0.1:${LABELER_PORT}${req.originalUrl}`;
   console.log(`🔀 Proxying HTTP ${req.method} request to LabelerServer: ${targetUrl}`);
-
   const proxyReq = http.request(
     {
       host: '127.0.0.1',
@@ -264,7 +273,7 @@ export function startWebServer() {
   });
 
   if (labelerServer) {
-    labelerServer.start(LABELER_PORT, (err, address) => {
+    labelerServer.start({ port: LABELER_PORT, host: '127.0.0.1' }, (err, address) => {
       if (err) {
         console.error('❌ Failed to start LabelerServer Fastify instance:', err);
       } else {
