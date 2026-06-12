@@ -1,4 +1,6 @@
 import { LabelerServer } from '@skyware/labeler';
+import fs from 'node:fs';
+import path from 'node:path';
 import { DID, SIGNING_KEY, DRY_RUN } from './config.js';
 import { getActiveAuthors, slugify } from './database.js';
 
@@ -52,11 +54,38 @@ export let labelerServer: LabelerServer | null = null;
 
 if (!DRY_RUN && DID && SIGNING_KEY) {
   try {
-    console.log(`🔑 Initializing LabelerServer for DID: ${DID}`);
+    let dbPath = './labels.db';
+
+    // In Cloud Run (production/development serverless containers), the workspace root is read-only.
+    // We copy the bundled labels.db to the writable /tmp directory if running on Cloud Run.
+    if (process.env.K_SERVICE) {
+      dbPath = '/tmp/labels.db';
+      try {
+        const srcDb = path.resolve(process.cwd(), 'labels.db');
+        if (fs.existsSync(srcDb)) {
+          console.log(`📦 Cloud Run detected: Copying bundled database from ${srcDb} to ${dbPath}...`);
+          fs.copyFileSync(srcDb, dbPath);
+          
+          // Also copy WAL files if they exist in workspace to ensure DB integrity
+          const srcShm = srcDb + '-shm';
+          const srcWal = srcDb + '-wal';
+          if (fs.existsSync(srcShm)) fs.copyFileSync(srcShm, dbPath + '-shm');
+          if (fs.existsSync(srcWal)) fs.copyFileSync(srcWal, dbPath + '-wal');
+          
+          console.log(`✅ Successfully copied database files to /tmp`);
+        } else {
+          console.log(`ℹ️ No bundled database found at ${srcDb}. A new SQLite database will be initialized at ${dbPath}`);
+        }
+      } catch (err) {
+        console.error('❌ Failed to copy bundled database to /tmp:', err);
+      }
+    }
+
+    console.log(`🔑 Initializing LabelerServer for DID: ${DID} using dbPath: ${dbPath}`);
     labelerServer = new LabelerServer({
       did: DID,
       signingKey: SIGNING_KEY,
-      // Uses a local labels.db automatically managed by @skyware/labeler
+      dbPath: dbPath,
     });
   } catch (err) {
     console.error('❌ Failed to initialize LabelerServer:', err);

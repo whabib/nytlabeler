@@ -148,6 +148,7 @@ DEPLOY_FLAGS=(
   "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
   "--allow-unauthenticated"
   "--max-instances" "1"
+  "--concurrency" "1000"
   "--cpu" "2"
   "--memory" "1Gi"
 )
