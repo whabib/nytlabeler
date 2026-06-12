@@ -227,6 +227,7 @@ app.post('/api/firehose/toggle', async (req, res) => {
   }
   const { enabled } = req.body;
   if (enabled === true) {
+    startFirehoseListener();
     await saveSetting('firehose_enabled', 'true');
     broadcastStats();
     res.json({ success: true, firehoseEnabled: true });
