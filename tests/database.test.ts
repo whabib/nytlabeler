@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { normalizeNytUrl, slugify } from '../src/database.js';
+import { normalizeNytUrl, slugify, saveSetting, loadSetting, pool } from '../src/database.js';
 
 describe('Database Helpers', () => {
   describe('normalizeNytUrl', () => {
@@ -41,6 +41,115 @@ describe('Database Helpers', () => {
 
     test('should trim leading and trailing hyphens', () => {
       assert.strictEqual(slugify('--Some Section Name--'), 'some-section-name');
+    });
+  });
+
+  describe('Settings Persistence (Environment-Aware)', () => {
+    test('should save and load settings with the correct environment scoping', async (t) => {
+      const mockDb = new Map<string, string>(); // key format: "env:key" -> value
+
+      // Mock pool.query
+      const queryMock = t.mock.method(pool, 'query', async (sql: string, params?: any[]) => {
+        const sqlNormalized = sql.trim().replace(/\s+/g, ' ');
+
+        // 1. Handle SELECT value FROM "_Settings" WHERE environment = $1 AND key = $2
+        if (sqlNormalized.includes('SELECT value FROM "_Settings"')) {
+          const env = params?.[0];
+          const key = params?.[1];
+          const mockKey = `${env}:${key}`;
+          const value = mockDb.get(mockKey);
+          if (value === undefined) {
+            return { rows: [] };
+          }
+          return { rows: [{ value }] };
+        }
+
+        // 2. Handle INSERT INTO "_Settings" (environment, key, value) ... ON CONFLICT
+        if (sqlNormalized.includes('INSERT INTO "_Settings"')) {
+          const env = params?.[0];
+          const key = params?.[1];
+          const value = params?.[2];
+          const mockKey = `${env}:${key}`;
+          mockDb.set(mockKey, value);
+          return { rows: [] };
+        }
+
+        // Fallback for other database operations (table check, create table etc.)
+        if (sqlNormalized.includes('SELECT column_name') && sqlNormalized.includes('_Settings')) {
+          // Mock information schema check - return environment column as existing
+          return { rows: [{ column_name: 'environment' }] };
+        }
+
+        return { rows: [] };
+      });
+
+      // Assert environment separation:
+      // First, save 'firehose_enabled' = 'false'
+      await saveSetting('firehose_enabled', 'false');
+
+      // Check that it was saved under the current ENV
+      const loadedValue = await loadSetting('firehose_enabled', 'true');
+      assert.strictEqual(loadedValue, 'false');
+
+      // Now verify that if we query for a different environment (by simulating mock data for 'production'),
+      // they don't leak or conflict with each other.
+      mockDb.set('production:firehose_enabled', 'true');
+      mockDb.set('development:firehose_enabled', 'false');
+
+      const insertCalls = queryMock.mock.calls.filter(c => c.arguments[0].includes('INSERT'));
+      assert.ok(insertCalls.length >= 1, 'Should have made at least one INSERT query');
+      const firstInsertArgs = insertCalls[0].arguments[1];
+      assert.strictEqual(firstInsertArgs[1], 'firehose_enabled');
+      assert.strictEqual(firstInsertArgs[2], 'false');
+
+      const selectCalls = queryMock.mock.calls.filter(c => c.arguments[0].includes('SELECT value'));
+      assert.ok(selectCalls.length >= 1, 'Should have made at least one SELECT query');
+      const firstSelectArgs = selectCalls[0].arguments[1];
+      assert.strictEqual(firstSelectArgs[0], firstInsertArgs[0], 'Should query the exact same environment it saved to');
+      assert.strictEqual(firstSelectArgs[1], 'firehose_enabled');
+    });
+
+    test('should fall back to default value if setting is not found', async (t) => {
+      // Mock pool.query to return empty result
+      t.mock.method(pool, 'query', async () => {
+        return { rows: [] };
+      });
+
+      const loaded = await loadSetting('non_existent_key', 'default_val');
+      assert.strictEqual(loaded, 'default_val');
+    });
+
+    test('should auto-create or migrate table if querying fails', async (t) => {
+      let createdTable = false;
+      let checkedColumns = false;
+
+      t.mock.method(pool, 'query', async (sql: string) => {
+        const sqlNormalized = sql.trim().replace(/\s+/g, ' ');
+        if (sqlNormalized.includes('SELECT value FROM "_Settings"')) {
+          throw new Error('Relation "_Settings" does not exist');
+        }
+        if (sqlNormalized.includes('CREATE TABLE IF NOT EXISTS "_Settings"')) {
+          createdTable = true;
+          return { rows: [] };
+        }
+        if (sqlNormalized.includes('SELECT column_name') && sqlNormalized.includes('_Settings')) {
+          checkedColumns = true;
+          return { rows: [] }; // Mock that 'environment' column is missing to trigger drop/recreate
+        }
+        if (sqlNormalized.includes('DROP TABLE IF EXISTS "_Settings"')) {
+          return { rows: [] };
+        }
+        if (sqlNormalized.includes('CREATE TABLE "_Settings"')) {
+          createdTable = true;
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const loaded = await loadSetting('firehose_enabled', 'true');
+      assert.strictEqual(loaded, 'true');
+      assert.ok(createdTable, 'Should have attempted to create settings table');
+      assert.ok(checkedColumns, 'Should have checked column schemas for environment column existence');
     });
   });
 });
