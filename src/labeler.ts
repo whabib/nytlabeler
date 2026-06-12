@@ -155,3 +155,10 @@ export async function issueLabelsForPost(
 declare global {
   var broadcastLog: ((log: IssuedLabelLog) => void) | undefined;
 }
+
+/**
+ * Sets the LabelerServer instance. Useful for unit testing and mocking.
+ */
+export function setLabelerServer(server: any) {
+  labelerServer = server;
+}

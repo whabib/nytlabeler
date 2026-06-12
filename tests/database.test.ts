@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
 import { normalizeNytUrl, slugify, saveSetting, loadSetting, pool } from '../src/database.js';
 
@@ -151,5 +151,9 @@ describe('Database Helpers', () => {
       assert.ok(createdTable, 'Should have attempted to create settings table');
       assert.ok(checkedColumns, 'Should have checked column schemas for environment column existence');
     });
+  });
+
+  after(async () => {
+    await pool.end();
   });
 });

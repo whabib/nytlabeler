@@ -1,7 +1,6 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
@@ -15,8 +14,11 @@ const __dirname = path.dirname(__filename);
 export const app = express();
 export const server = http.createServer(app);
 
-// Initialize WebSocket Server
+// Initialize WebSocket Server for dashboard
 export const wss = new WebSocketServer({ noServer: true });
+
+// Initialize WebSocket Server for Labeler proxying
+export const labelerProxyWss = new WebSocketServer({ noServer: true });
 
 // Track active WebSocket clients
 const clients = new Set<WebSocket>();
@@ -73,6 +75,86 @@ wss.on('connection', (ws, request) => {
   });
 });
 
+// Handle connections to the Labeler Proxy WebSocket Server
+labelerProxyWss.on('connection', (clientWs, request) => {
+  const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+  const targetUrl = `ws://127.0.0.1:${LABELER_PORT}${urlObj.pathname}${urlObj.search}`;
+  
+  console.log(`🔌 Establishing protocol-level proxy connection to LabelerServer: ${targetUrl}`);
+  
+  const targetWs = new WebSocket(targetUrl);
+  
+  let isClosed = false;
+  const cleanup = () => {
+    if (isClosed) return;
+    isClosed = true;
+    try { clientWs.close(); } catch {}
+    try { targetWs.close(); } catch {}
+  };
+
+  targetWs.on('open', () => {
+    console.log(`✅ Protocol-level proxy connection opened to LabelerServer`);
+  });
+
+  clientWs.on('message', (data, isBinary) => {
+    if (targetWs.readyState === WebSocket.OPEN) {
+      targetWs.send(data, { binary: isBinary });
+    }
+  });
+
+  targetWs.on('message', (data, isBinary) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(data, { binary: isBinary });
+    }
+  });
+
+  clientWs.on('close', (code, reason) => {
+    console.log(`🔌 WS Proxy: Client WebSocket closed (Code: ${code}, Reason: ${reason || 'None'})`);
+    if (targetWs.readyState === WebSocket.OPEN || targetWs.readyState === WebSocket.CONNECTING) {
+      try {
+        if (code && code !== 1005 && code !== 1006 && code !== 1015) {
+          targetWs.close(code, reason);
+        } else {
+          targetWs.close();
+        }
+      } catch (err) {
+        console.error('⚠️ WS Proxy: Error closing targetWs with code/reason, falling back to clean close:', err);
+        try { targetWs.close(); } catch {}
+      }
+    }
+    cleanup();
+  });
+
+  targetWs.on('close', (code, reason) => {
+    console.log(`🔌 WS Proxy: LabelerServer WebSocket closed (Code: ${code}, Reason: ${reason || 'None'})`);
+    if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
+      try {
+        if (code && code !== 1005 && code !== 1006 && code !== 1015) {
+          clientWs.close(code, reason);
+        } else {
+          clientWs.close();
+        }
+      } catch (err) {
+        console.error('⚠️ WS Proxy: Error closing clientWs with code/reason, falling back to clean close:', err);
+        try { clientWs.close(); } catch {}
+      }
+    }
+    cleanup();
+  });
+
+  clientWs.on('error', (err) => {
+    console.error('❌ WS Proxy: Client WebSocket Error:', err);
+    targetWs.terminate();
+    cleanup();
+  });
+
+  targetWs.on('error', (err) => {
+    console.error('❌ WS Proxy: LabelerServer WebSocket Error:', err);
+    clientWs.terminate();
+    cleanup();
+  });
+});
+
 /**
  * Handle upgrade requests from HTTP to WebSocket.
  */
@@ -88,38 +170,9 @@ server.on('upgrade', (request, socket, head) => {
       socket.destroy();
       return;
     }
-    console.log(`🔀 Proxying WebSocket upgrade for ${pathname} to LabelerServer on port ${LABELER_PORT}`);
-    const targetSocket = net.connect(LABELER_PORT, '127.0.0.1', () => {
-      let rawRequest = `${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`;
-      for (const [key, value] of Object.entries(request.headers)) {
-        if (Array.isArray(value)) {
-          for (const val of value) {
-            rawRequest += `${key}: ${val}\r\n`;
-          }
-        } else if (value !== undefined) {
-          rawRequest += `${key}: ${value}\r\n`;
-        }
-      }
-      rawRequest += '\r\n';
-      
-      targetSocket.write(rawRequest);
-      
-      if (head && head.length > 0) {
-        targetSocket.write(head);
-      }
-      
-      targetSocket.pipe(socket);
-      socket.pipe(targetSocket);
-    });
-
-    targetSocket.on('error', (err) => {
-      console.error('❌ WS Proxy Target Socket Error:', err);
-      socket.destroy();
-    });
-
-    socket.on('error', (err) => {
-      console.error('❌ WS Proxy Client Socket Error:', err);
-      targetSocket.destroy();
+    console.log(`🔀 Upgrading and proxying WebSocket connection for ${pathname} to LabelerServer on port ${LABELER_PORT}`);
+    labelerProxyWss.handleUpgrade(request, socket, head, (ws) => {
+      labelerProxyWss.emit('connection', ws, request);
     });
   } else {
     socket.destroy();
@@ -168,7 +221,7 @@ export function broadcastStats(updateThroughputWindow = false) {
 
 setInterval(() => {
   broadcastStats(true);
-}, 1000);
+}, 1000).unref();
 
 // Proxy HTTP requests to com.atproto.label (XRPC) to Fastify LabelerServer on LABELER_PORT
 app.use('/xrpc', (req, res) => {

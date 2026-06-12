@@ -1,6 +1,7 @@
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
 import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet } from '../src/labeler.js';
+import { pool } from '../src/database.js';
 
 describe('Labeler Logic', () => {
   beforeEach(() => {
@@ -66,5 +67,9 @@ describe('Labeler Logic', () => {
     );
 
     assert.strictEqual(recentLabels.length, 0);
+  });
+
+  after(async () => {
+    await pool.end();
   });
 });
