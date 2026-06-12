@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
 import { recentLabels, stats, IssuedLabelLog, labelerServer } from './labeler.js';
-import { getActiveAuthors, getDistinctCategories } from './database.js';
+import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -44,7 +44,7 @@ wss.on('connection', (ws, request) => {
   // Send initial stats on connection
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
 
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message.toString());
       if (data.type === 'toggle') {
@@ -55,8 +55,10 @@ wss.on('connection', (ws, request) => {
         const { enabled } = data;
         if (enabled === true) {
           startFirehoseListener();
+          await saveSetting('firehose_enabled', 'true');
         } else if (enabled === false) {
           stopFirehoseListener();
+          await saveSetting('firehose_enabled', 'false');
         }
         broadcastStats();
       }
@@ -218,14 +220,16 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-app.post('/api/firehose/toggle', (req, res) => {
+app.post('/api/firehose/toggle', async (req, res) => {
   const { enabled } = req.body;
   if (enabled === true) {
     startFirehoseListener();
+    await saveSetting('firehose_enabled', 'true');
     broadcastStats();
     res.json({ success: true, firehoseEnabled: true });
   } else if (enabled === false) {
     stopFirehoseListener();
+    await saveSetting('firehose_enabled', 'false');
     broadcastStats();
     res.json({ success: true, firehoseEnabled: false });
   } else {
