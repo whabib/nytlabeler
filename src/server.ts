@@ -221,9 +221,12 @@ app.get('/api/stats', (req, res) => {
 });
 
 app.post('/api/firehose/toggle', async (req, res) => {
+  if (!isSameOriginRequest(req)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
   const { enabled } = req.body;
   if (enabled === true) {
-    startFirehoseListener();
     await saveSetting('firehose_enabled', 'true');
     broadcastStats();
     res.json({ success: true, firehoseEnabled: true });
