@@ -34,7 +34,7 @@ async function publishDefinitions() {
       identifier: slug,
       severity: 'inform',
       blurs: 'none',
-      defaultSetting: 'ignore',
+      defaultSetting: 'warn',
       locales: [
         {
           lang: 'en',
@@ -57,7 +57,7 @@ async function publishDefinitions() {
       identifier: slug,
       severity: 'inform',
       blurs: 'none',
-      defaultSetting: 'ignore',
+      defaultSetting: 'warn',
       locales: [
         {
           lang: 'en',
@@ -78,7 +78,7 @@ async function publishDefinitions() {
       identifier: slug,
       severity: 'inform',
       blurs: 'none',
-      defaultSetting: 'ignore',
+      defaultSetting: 'warn',
       locales: [
         {
           lang: 'en',
@@ -118,7 +118,7 @@ async function publishDefinitions() {
   // 5. Connect and Login to Bluesky
   console.log(`🔐 Logging into Bluesky as ${BSKY_IDENTIFIER}...`);
   const agent = new BskyAgent({ service: 'https://bsky.social' });
-  
+
   try {
     await agent.login({
       identifier: BSKY_IDENTIFIER,
