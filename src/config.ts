@@ -12,6 +12,7 @@ export const ENV = process.env.ENV || 'development';
 export const IS_DEV = ENV === 'development';
 
 export const PORT = parseInt(process.env.PORT || '4100', 10);
+export const LABELER_PORT = parseInt(process.env.LABELER_PORT || String(PORT + 1), 10);
 export const DRY_RUN = process.env.DRY_RUN === 'true';
 
 // ATProto credentials (unified)

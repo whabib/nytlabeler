@@ -1,10 +1,11 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
-import { recentLabels, stats, IssuedLabelLog } from './labeler.js';
+import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
+import { recentLabels, stats, IssuedLabelLog, labelerServer } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
@@ -79,6 +80,45 @@ server.on('upgrade', (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
+  } else if (pathname.startsWith('/xrpc/')) {
+    if (!labelerServer) {
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    console.log(`🔀 Proxying WebSocket upgrade for ${pathname} to LabelerServer on port ${LABELER_PORT}`);
+    const targetSocket = net.connect(LABELER_PORT, '127.0.0.1', () => {
+      let rawRequest = `${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`;
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (Array.isArray(value)) {
+          for (const val of value) {
+            rawRequest += `${key}: ${val}\r\n`;
+          }
+        } else if (value !== undefined) {
+          rawRequest += `${key}: ${value}\r\n`;
+        }
+      }
+      rawRequest += '\r\n';
+      
+      targetSocket.write(rawRequest);
+      
+      if (head && head.length > 0) {
+        targetSocket.write(head);
+      }
+      
+      targetSocket.pipe(socket);
+      socket.pipe(targetSocket);
+    });
+
+    targetSocket.on('error', (err) => {
+      console.error('❌ WS Proxy Target Socket Error:', err);
+      socket.destroy();
+    });
+
+    socket.on('error', (err) => {
+      console.error('❌ WS Proxy Client Socket Error:', err);
+      targetSocket.destroy();
+    });
   } else {
     socket.destroy();
   }
@@ -127,6 +167,40 @@ export function broadcastStats(updateThroughputWindow = false) {
 setInterval(() => {
   broadcastStats(true);
 }, 1000);
+
+// Proxy HTTP requests to com.atproto.label (XRPC) to Fastify LabelerServer on LABELER_PORT
+app.use('/xrpc', (req, res) => {
+  if (!labelerServer) {
+    res.status(503).send('LabelerServer not initialized');
+    return;
+  }
+
+  const targetUrl = `http://127.0.0.1:${LABELER_PORT}${req.originalUrl}`;
+  console.log(`🔀 Proxying HTTP ${req.method} request to LabelerServer: ${targetUrl}`);
+  const proxyReq = http.request(
+    {
+      host: '127.0.0.1',
+      port: LABELER_PORT,
+      path: req.originalUrl,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: `127.0.0.1:${LABELER_PORT}`,
+      },
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  );
+
+  proxyReq.on('error', (err) => {
+    console.error('❌ HTTP Proxy Request Error:', err);
+    res.status(502).send('Bad Gateway');
+  });
+
+  req.pipe(proxyReq);
+});
 
 // Parse JSON payloads
 app.use(express.json());
@@ -197,4 +271,16 @@ export function startWebServer() {
     console.log(`🚀 Web Dashboard running at http://localhost:${PORT}`);
     console.log(`🔌 WebSocket Server listening at ws://localhost:${PORT}/ws`);
   });
+
+  if (labelerServer) {
+    labelerServer.start({ port: LABELER_PORT, host: '127.0.0.1' }, (err, address) => {
+      if (err) {
+        console.error('❌ Failed to start LabelerServer Fastify instance:', err);
+      } else {
+        console.log(`🏷️ LabelerServer Fastify instance running at ${address}`);
+      }
+    });
+  } else {
+    console.log('ℹ️ No LabelerServer instance to start (dry run or credentials missing).');
+  }
 }
