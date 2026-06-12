@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { DATABASE_URL } from './config.js';
+import { DATABASE_URL, ENV } from './config.js';
 
 const { Pool } = pg;
 
@@ -152,5 +152,72 @@ export async function getDistinctCategories(): Promise<{ sections: string[]; sub
   } catch (error) {
     console.error('Database error fetching categories:', error);
     return { sections: [], subsections: [] };
+  }
+}
+
+/**
+ * Saves a system setting to the database (environment-aware).
+ */
+export async function saveSetting(key: string, value: string): Promise<void> {
+  const sql = `
+    INSERT INTO "_Settings" (environment, key, value)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (environment, key) DO UPDATE SET value = EXCLUDED.value;
+  `;
+  try {
+    await pool.query(sql, [ENV, key, value]);
+  } catch (err) {
+    console.error(`Error saving setting ${key} for environment ${ENV}:`, err);
+  }
+}
+
+/**
+ * Loads a system setting from the database (environment-aware).
+ */
+export async function loadSetting(key: string, defaultValue: string): Promise<string> {
+  const sql = `SELECT value FROM "_Settings" WHERE environment = $1 AND key = $2;`;
+  try {
+    const res = await pool.query(sql, [ENV, key]);
+    if (res.rows.length === 0) {
+      return defaultValue;
+    }
+    return res.rows[0].value;
+  } catch (err) {
+    // If the table doesn't exist yet, or is using the old single-key schema,
+    // we attempt to recreate or migrate it safely.
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS "_Settings" (
+          environment VARCHAR(50) NOT NULL,
+          key VARCHAR(255) NOT NULL,
+          value TEXT NOT NULL,
+          PRIMARY KEY (environment, key)
+        );
+      `);
+
+      // Verify if the 'environment' column actually exists in the table.
+      const colCheck = await pool.query(`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = '_Settings' AND column_name = 'environment';
+      `);
+
+      if (colCheck.rows.length === 0) {
+        console.log('🔄 Migrating old "_Settings" table to be environment-aware...');
+        // Drop the old table to avoid schema conflicts, then recreate with the compound primary key
+        await pool.query('DROP TABLE IF EXISTS "_Settings";');
+        await pool.query(`
+          CREATE TABLE "_Settings" (
+            environment VARCHAR(50) NOT NULL,
+            key VARCHAR(255) NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (environment, key)
+          );
+        `);
+      }
+    } catch (migErr) {
+      console.error('Failed to auto-create/migrate _Settings table:', migErr);
+    }
+    return defaultValue;
   }
 }
