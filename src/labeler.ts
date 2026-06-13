@@ -162,18 +162,38 @@ export async function ensureDatabaseSequence(cursor: number): Promise<void> {
       console.log(`🔌 [SEQ SYNC] Requested cursor ${cursor} is larger than database max ID ${maxId}. Padding database sequence...`);
       
       for (let id = maxId + 1; id <= cursor; id++) {
-        await labelerServer.db.execute({
-          sql: 'INSERT INTO labels (id, src, uri, val, cts) VALUES (?, ?, ?, ?, ?)',
-          args: [
-            id,
-            DID || 'did:plc:dummy',
-            `at://${DID || 'did:plc:dummy'}/app.bsky.feed.post/dummy-${id}`,
-            'dummy-sequence-pad',
-            new Date().toISOString(),
-          ],
+        const dummyUri = `at://${DID || 'did:plc:dummy'}/app.bsky.feed.post/dummy-${id}`;
+        const dummyVal = 'dummy-sequence-pad';
+
+        // Publish via LabelerServer so that a valid cryptographic signature (sig) is generated automatically
+        await labelerServer.createLabel({
+          uri: dummyUri,
+          val: dummyVal,
+          neg: false,
         });
+
+        // Query the newly inserted row to fetch its sequence ID and signature, then double-write to Postgres
+        const res = await labelerServer.db.execute({
+          sql: 'SELECT * FROM labels WHERE uri = ? AND val = ? ORDER BY id DESC LIMIT 1',
+          args: [dummyUri, dummyVal],
+        });
+
+        if (res.rows && res.rows.length > 0) {
+          const row = res.rows[0];
+          await syncLabelToPostgres({
+            id: Number(row.id),
+            src: String(row.src),
+            uri: String(row.uri),
+            cid: row.cid ? String(row.cid) : null,
+            val: String(row.val),
+            neg: Boolean(row.neg),
+            cts: String(row.cts),
+            exp: row.exp ? String(row.exp) : null,
+            sig: row.sig ? (Buffer.isBuffer(row.sig) ? row.sig : Buffer.from(row.sig as any)) : null,
+          });
+        }
       }
-      console.log(`🔌 [SEQ SYNC] Successfully padded database sequence up to ${cursor}`);
+      console.log(`🔌 [SEQ SYNC] Successfully padded and synchronized database sequence up to ${cursor}`);
     }
   } catch (err) {
     console.error('❌ Failed to ensure database sequence:', err);

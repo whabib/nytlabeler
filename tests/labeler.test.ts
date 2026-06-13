@@ -70,23 +70,54 @@ describe('Labeler Logic', () => {
   });
 
   test('ensureDatabaseSequence should pad database when cursor is greater than max ID', async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+
+    const createdLabels: any[] = [];
     const executedQueries: any[] = [];
+
     const mockServer = {
+      createLabel: async (label: any) => {
+        createdLabels.push(label);
+      },
       db: {
         execute: async (query: any) => {
           executedQueries.push(query);
           if (query.sql.includes('MAX(id)')) {
             return { rows: [{ id: 5 }] };
           }
+          if (query.sql.includes('SELECT * FROM labels')) {
+            const uri = query.args[0];
+            const idMatch = uri.match(/dummy-(\d+)/);
+            const id = idMatch ? parseInt(idMatch[1], 10) : 6;
+            return {
+              rows: [
+                {
+                  id,
+                  src: 'did:plc:mock',
+                  uri,
+                  val: 'dummy-sequence-pad',
+                  neg: 0,
+                  cts: new Date().toISOString(),
+                  exp: null,
+                  sig: new Uint8Array([1, 2, 3])
+                }
+              ]
+            };
+          }
           return { rows: [] };
         }
       }
     };
+
     setLabelerServer(mockServer);
     await ensureDatabaseSequence(8);
-    const insertQueries = executedQueries.filter(q => q.sql.includes('INSERT'));
-    assert.strictEqual(insertQueries.length, 3);
-    assert.strictEqual(insertQueries[0].args[0], 6);
+
+    assert.strictEqual(createdLabels.length, 3);
+    assert.strictEqual(createdLabels[0].val, 'dummy-sequence-pad');
+    assert.ok(createdLabels[0].uri.includes('dummy-6'));
+
+    pool.query = originalQuery;
     setLabelerServer(null);
   });
 
