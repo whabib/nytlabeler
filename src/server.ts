@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
-import { recentLabels, stats, IssuedLabelLog, labelerServer } from './labeler.js';
+import { recentLabels, stats, IssuedLabelLog, labelerServer, ensureDatabaseSequence } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
@@ -76,8 +76,15 @@ wss.on('connection', (ws, request) => {
 });
 
 // Handle connections to the Labeler Proxy WebSocket Server
-labelerProxyWss.on('connection', (clientWs, request) => {
+labelerProxyWss.on('connection', async (clientWs, request) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+  const cursorStr = urlObj.searchParams.get('cursor');
+  const cursor = parseInt(cursorStr ?? 'NaN', 10);
+
+  if (!Number.isNaN(cursor) && cursor > 0) {
+    await ensureDatabaseSequence(cursor);
+  }
+
   const targetUrl = `ws://127.0.0.1:${LABELER_PORT}${urlObj.pathname}${urlObj.search}`;
   
   console.log(`🔌 Establishing protocol-level proxy connection to LabelerServer: ${targetUrl}`);
