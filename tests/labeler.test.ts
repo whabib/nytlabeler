@@ -121,6 +121,70 @@ describe('Labeler Logic', () => {
     setLabelerServer(null);
   });
 
+  test('ensureDatabaseSequence should handle concurrent calls sequentially with a lock', async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+
+    const createdLabels: any[] = [];
+    let maxIdValue = 5;
+
+    const mockServer = {
+      createLabel: async (label: any) => {
+        createdLabels.push(label);
+        // Simulate a slight delay to allow concurrency to manifest
+        await new Promise(resolve => setTimeout(resolve, 10));
+      },
+      db: {
+        execute: async (query: any) => {
+          if (query.sql.includes('MAX(id)')) {
+            return { rows: [{ id: maxIdValue }] };
+          }
+          if (query.sql.includes('SELECT * FROM labels')) {
+            const uri = query.args[0];
+            const idMatch = uri.match(/dummy-(\d+)/);
+            const id = idMatch ? parseInt(idMatch[1], 10) : 6;
+            // When we finish padding, max ID shifts
+            if (id > maxIdValue) {
+              maxIdValue = id;
+            }
+            return {
+              rows: [
+                {
+                  id,
+                  src: 'did:plc:mock',
+                  uri,
+                  val: 'dummy-sequence-pad',
+                  neg: 0,
+                  cts: new Date().toISOString(),
+                  exp: null,
+                  sig: new Uint8Array([1, 2, 3])
+                }
+              ]
+            };
+          }
+          return { rows: [] };
+        }
+      }
+    };
+
+    setLabelerServer(mockServer);
+
+    // Call ensureDatabaseSequence concurrently three times
+    await Promise.all([
+      ensureDatabaseSequence(8),
+      ensureDatabaseSequence(8),
+      ensureDatabaseSequence(8)
+    ]);
+
+    // Because of the concurrency lock, the database should only have been padded once (3 creates total, from 5 to 8)
+    // If there were no lock, there would be 9 creates total!
+    assert.strictEqual(createdLabels.length, 3);
+    assert.strictEqual(maxIdValue, 8);
+
+    pool.query = originalQuery;
+    setLabelerServer(null);
+  });
+
   test('rehydrateDatabase should query Postgres and populate SQLite database', async () => {
     const originalQuery = pool.query;
     const sqliteQueries: any[] = [];
