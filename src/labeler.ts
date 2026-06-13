@@ -95,6 +95,43 @@ if (!DRY_RUN && DID && SIGNING_KEY) {
 }
 
 /**
+ * Ensures that the local SQLite database has a sequence number at least as large as the requested cursor.
+ * This prevents @skyware/labeler from throwing a FutureCursor error and disconnecting the client.
+ */
+export async function ensureDatabaseSequence(cursor: number): Promise<void> {
+  if (!labelerServer) return;
+  if (Number.isNaN(cursor) || cursor <= 0) return;
+
+  try {
+    const latest = await labelerServer.db.execute({
+      sql: 'SELECT MAX(id) AS id FROM labels',
+      args: [],
+    });
+    const maxId = Number(latest.rows[0]?.id || 0);
+
+    if (cursor > maxId) {
+      console.log(`🔌 [SEQ SYNC] Requested cursor ${cursor} is larger than database max ID ${maxId}. Padding database sequence...`);
+      
+      for (let id = maxId + 1; id <= cursor; id++) {
+        await labelerServer.db.execute({
+          sql: 'INSERT INTO labels (id, src, uri, val, cts) VALUES (?, ?, ?, ?, ?)',
+          args: [
+            id,
+            DID || 'did:plc:dummy',
+            `at://${DID || 'did:plc:dummy'}/app.bsky.feed.post/dummy-${id}`,
+            'dummy-sequence-pad',
+            new Date().toISOString(),
+          ],
+        });
+      }
+      console.log(`🔌 [SEQ SYNC] Successfully padded database sequence up to ${cursor}`);
+    }
+  } catch (err) {
+    console.error('❌ Failed to ensure database sequence:', err);
+  }
+}
+
+/**
  * Emits labels for an ATProto record.
  * @param uri The ATProto URI of the post, e.g. at://did:plc:xxx/app.bsky.feed.post/yyy
  * @param authorDid The DID of the post's author

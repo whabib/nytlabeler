@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet } from '../src/labeler.js';
+import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer } from '../src/labeler.js';
 import { pool } from '../src/database.js';
 
 describe('Labeler Logic', () => {
@@ -67,6 +67,27 @@ describe('Labeler Logic', () => {
     );
 
     assert.strictEqual(recentLabels.length, 0);
+  });
+
+  test('ensureDatabaseSequence should pad database when cursor is greater than max ID', async () => {
+    const executedQueries: any[] = [];
+    const mockServer = {
+      db: {
+        execute: async (query: any) => {
+          executedQueries.push(query);
+          if (query.sql.includes('MAX(id)')) {
+            return { rows: [{ id: 5 }] };
+          }
+          return { rows: [] };
+        }
+      }
+    };
+    setLabelerServer(mockServer);
+    await ensureDatabaseSequence(8);
+    const insertQueries = executedQueries.filter(q => q.sql.includes('INSERT'));
+    assert.strictEqual(insertQueries.length, 3);
+    assert.strictEqual(insertQueries[0].args[0], 6);
+    setLabelerServer(null);
   });
 
   after(async () => {
