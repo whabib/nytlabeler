@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer, rehydrateDatabase } from '../src/labeler.js';
+import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer, rehydrateDatabase, setLocalMaxId, localMaxId } from '../src/labeler.js';
 import { pool } from '../src/database.js';
 
 describe('Labeler Logic', () => {
@@ -12,6 +12,9 @@ describe('Labeler Logic', () => {
     activeAuthorSlugsSet.clear();
     activeAuthorSlugsSet.add('ross-douthat');
     activeAuthorSlugsSet.add('jamelle-bouie');
+
+    // Reset sequence cache to prevent test state contamination
+    setLocalMaxId(0);
   });
 
   test('should generate section and subsection labels correctly (without prefixes)', async () => {
@@ -234,13 +237,43 @@ describe('Labeler Logic', () => {
 
     await rehydrateDatabase();
 
-    assert.strictEqual(sqliteQueries.length, 2);
-    assert.ok(sqliteQueries[0].sql.includes('INSERT OR IGNORE INTO labels'));
-    assert.strictEqual(sqliteQueries[0].args[0], 1);
-    assert.strictEqual(sqliteQueries[1].args[0], 2);
+    const insertQueries = sqliteQueries.filter(q => q.sql.includes('INSERT OR IGNORE INTO labels'));
+    assert.strictEqual(insertQueries.length, 2);
+    assert.strictEqual(insertQueries[0].args[0], 1);
+    assert.strictEqual(insertQueries[1].args[0], 2);
+
+    const selectQueries = sqliteQueries.filter(q => q.sql.includes('MAX(id)'));
+    assert.strictEqual(selectQueries.length, 1);
 
     // Restore original query function and reset mock server
     pool.query = originalQuery;
+    setLabelerServer(null);
+  });
+
+  test('ensureDatabaseSequence should bypass locks and database queries when cursor <= localMaxId', async () => {
+    // Manually set localMaxId to 10
+    setLocalMaxId(10);
+
+    const mockServer = {
+      db: {
+        execute: async () => {
+          throw new Error('Database query should NOT be executed when cursor <= localMaxId!');
+        }
+      }
+    };
+    setLabelerServer(mockServer);
+
+    // Call with a cursor <= 10. This should return instantly and successfully
+    await assert.doesNotReject(async () => {
+      await ensureDatabaseSequence(8);
+    });
+
+    await assert.doesNotReject(async () => {
+      await ensureDatabaseSequence(10);
+    });
+
+    // Reset localMaxId and server
+    setLocalMaxId(0);
     setLabelerServer(null);
   });
 

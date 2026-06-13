@@ -94,6 +94,16 @@ if (!DRY_RUN && DID && SIGNING_KEY) {
   console.log('ℹ️ Running in Dry Run / Mock Labeler mode. No label server initialized.');
 }
 
+export let localMaxId = 0;
+
+/**
+ * Sets the localMaxId sequence cache value. Useful for unit testing.
+ */
+export function setLocalMaxId(val: number): void {
+  localMaxId = val;
+  console.log(`🔌 [SEQ CACHE] Manually set localMaxId to ${val}`);
+}
+
 /**
  * Rehydrates the local SQLite database from the environment-aware PostgreSQL DB upon startup.
  */
@@ -108,38 +118,50 @@ export async function rehydrateDatabase(): Promise<void> {
     const pgLabels = await fetchLabelsFromPostgres();
     if (pgLabels.length === 0) {
       console.log('🔋 [REHYDRATE] No historical labels found in PostgreSQL for this environment.');
-      return;
-    }
+    } else {
+      console.log(`🔋 [REHYDRATE] Found ${pgLabels.length} historical labels in PostgreSQL. Syncing into local SQLite...`);
+      
+      // We execute the inserts in a loop using labelerServer.db.execute.
+      // "INSERT OR IGNORE" ensures that we don't crash or create duplicates if some records already exist.
+      let syncedCount = 0;
+      for (const label of pgLabels) {
+        await labelerServer.db.execute({
+          sql: `
+            INSERT OR IGNORE INTO labels (id, src, uri, cid, val, neg, cts, exp, sig)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          args: [
+            label.id,
+            label.src,
+            label.uri,
+            label.cid,
+            label.val,
+            label.neg ? 1 : 0,
+            label.cts,
+            label.exp,
+            label.sig,
+          ],
+        });
+        syncedCount++;
+      }
 
-    console.log(`🔋 [REHYDRATE] Found ${pgLabels.length} historical labels in PostgreSQL. Syncing into local SQLite...`);
-    
-    // We execute the inserts in a loop using labelerServer.db.execute.
-    // "INSERT OR IGNORE" ensures that we don't crash or create duplicates if some records already exist.
-    let syncedCount = 0;
-    for (const label of pgLabels) {
-      await labelerServer.db.execute({
-        sql: `
-          INSERT OR IGNORE INTO labels (id, src, uri, cid, val, neg, cts, exp, sig)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        args: [
-          label.id,
-          label.src,
-          label.uri,
-          label.cid,
-          label.val,
-          label.neg ? 1 : 0,
-          label.cts,
-          label.exp,
-          label.sig,
-        ],
-      });
-      syncedCount++;
+      console.log(`✅ [REHYDRATE] Successfully synced ${syncedCount} labels into the local SQLite database!`);
     }
-
-    console.log(`✅ [REHYDRATE] Successfully synced ${syncedCount} labels into the local SQLite database!`);
   } catch (err) {
     console.error('❌ Failed to rehydrate SQLite database from PostgreSQL:', err);
+  } finally {
+    // Initialize localMaxId from SQLite regardless of whether rehydration succeeded/ran
+    try {
+      const latest = await labelerServer.db.execute({
+        sql: 'SELECT MAX(id) AS id FROM labels',
+        args: [],
+      });
+      const maxId = Number(latest.rows[0]?.id || 0);
+      localMaxId = maxId;
+      console.log(`🔋 [REHYDRATE] Initialized localMaxId in-memory sequence cache to ${localMaxId}`);
+    } catch (dbErr) {
+      console.error('❌ Failed to initialize localMaxId from SQLite:', dbErr);
+    }
   }
 }
 let seqSyncPromise: Promise<void> | null = null;
@@ -152,9 +174,19 @@ export async function ensureDatabaseSequence(cursor: number): Promise<void> {
   if (!labelerServer) return;
   if (Number.isNaN(cursor) || cursor <= 0) return;
 
+  // Fast-path sequence cache: exit instantly (0ms) without any database queries or locks
+  if (cursor <= localMaxId) {
+    return;
+  }
+
   // Wait for any active sync/padding promise to complete before proceeding
   while (seqSyncPromise) {
     await seqSyncPromise;
+  }
+
+  // Double check again in case a concurrent call completed and updated localMaxId
+  if (cursor <= localMaxId) {
+    return;
   }
 
   // Set up a new sequence synchronization promise immediately (synchronously) to lock the door
@@ -170,11 +202,15 @@ export async function ensureDatabaseSequence(cursor: number): Promise<void> {
     });
     const maxId = Number(latest.rows[0]?.id || 0);
 
+    if (maxId > localMaxId) {
+      localMaxId = maxId;
+    }
+
     if (cursor <= maxId) {
       return;
     }
 
-    console.log(`🔌 [SEQ SYNC] Requested cursor ${cursor} is larger than database max ID ${maxId}. Padding database sequence...`);
+    console.log(`🔌 [SEQ SYNC] Requested cursor ${cursor} is larger than database max ID ${maxId} (localMaxId is ${localMaxId}). Padding database sequence...`);
     const syncPromises: Promise<void>[] = [];
     
     for (let id = maxId + 1; id <= cursor; id++) {
@@ -217,6 +253,11 @@ export async function ensureDatabaseSequence(cursor: number): Promise<void> {
     // Await all PostgreSQL inserts to complete concurrently (minimizing network loop wait time)
     if (syncPromises.length > 0) {
       await Promise.all(syncPromises);
+    }
+
+    // Update in-memory sequence cache after successful padding
+    if (cursor > localMaxId) {
+      localMaxId = cursor;
     }
     console.log(`🔌 [SEQ SYNC] Successfully padded and synchronized database sequence up to ${cursor}`);
   } catch (err) {
@@ -313,6 +354,10 @@ export async function issueLabelsForPost(
 
         if (res.rows && res.rows.length > 0) {
           const row = res.rows[0];
+          const newId = Number(row.id);
+          if (newId > localMaxId) {
+            localMaxId = newId;
+          }
           await syncLabelToPostgres({
             id: Number(row.id),
             src: String(row.src),
