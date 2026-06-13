@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer } from '../src/labeler.js';
+import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer, rehydrateDatabase } from '../src/labeler.js';
 import { pool } from '../src/database.js';
 
 describe('Labeler Logic', () => {
@@ -87,6 +87,65 @@ describe('Labeler Logic', () => {
     const insertQueries = executedQueries.filter(q => q.sql.includes('INSERT'));
     assert.strictEqual(insertQueries.length, 3);
     assert.strictEqual(insertQueries[0].args[0], 6);
+    setLabelerServer(null);
+  });
+
+  test('rehydrateDatabase should query Postgres and populate SQLite database', async () => {
+    const originalQuery = pool.query;
+    const sqliteQueries: any[] = [];
+
+    // Mock pool.query to simulate fetching labels from Postgres
+    pool.query = (async (sqlStr: string, args?: any[]) => {
+      if (sqlStr.includes('SELECT id, src')) {
+        return {
+          rows: [
+            {
+              id: 1,
+              src: 'did:plc:mock',
+              uri: 'at://did:plc:mock/post/1',
+              cid: null,
+              val: 'opinion',
+              neg: false,
+              cts: '2026-06-13T00:00:00.000Z',
+              exp: null,
+              sig: new Uint8Array([1, 2, 3])
+            },
+            {
+              id: 2,
+              src: 'did:plc:mock',
+              uri: 'at://did:plc:mock/post/2',
+              cid: null,
+              val: 'travel',
+              neg: false,
+              cts: '2026-06-13T00:01:00.000Z',
+              exp: null,
+              sig: new Uint8Array([4, 5, 6])
+            }
+          ]
+        };
+      }
+      return { rows: [] };
+    }) as any;
+
+    const mockServer = {
+      db: {
+        execute: async (query: any) => {
+          sqliteQueries.push(query);
+          return { rows: [] };
+        }
+      }
+    };
+    setLabelerServer(mockServer);
+
+    await rehydrateDatabase();
+
+    assert.strictEqual(sqliteQueries.length, 2);
+    assert.ok(sqliteQueries[0].sql.includes('INSERT OR IGNORE INTO labels'));
+    assert.strictEqual(sqliteQueries[0].args[0], 1);
+    assert.strictEqual(sqliteQueries[1].args[0], 2);
+
+    // Restore original query function and reset mock server
+    pool.query = originalQuery;
     setLabelerServer(null);
   });
 

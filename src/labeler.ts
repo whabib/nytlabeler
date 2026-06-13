@@ -2,7 +2,7 @@ import { LabelerServer } from '@skyware/labeler';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DID, SIGNING_KEY, DRY_RUN } from './config.js';
-import { getActiveAuthors, slugify } from './database.js';
+import { getActiveAuthors, slugify, syncLabelToPostgres, fetchLabelsFromPostgres, LabelRecord } from './database.js';
 
 // Define matching types
 export interface IssuedLabelLog {
@@ -92,6 +92,55 @@ if (!DRY_RUN && DID && SIGNING_KEY) {
   }
 } else {
   console.log('ℹ️ Running in Dry Run / Mock Labeler mode. No label server initialized.');
+}
+
+/**
+ * Rehydrates the local SQLite database from the environment-aware PostgreSQL DB upon startup.
+ */
+export async function rehydrateDatabase(): Promise<void> {
+  if (!labelerServer) {
+    console.log('ℹ️ No local LabelerServer initialized. Skipping SQLite database rehydration.');
+    return;
+  }
+
+  try {
+    console.log('🔋 [REHYDRATE] Fetching historical labels from PostgreSQL...');
+    const pgLabels = await fetchLabelsFromPostgres();
+    if (pgLabels.length === 0) {
+      console.log('🔋 [REHYDRATE] No historical labels found in PostgreSQL for this environment.');
+      return;
+    }
+
+    console.log(`🔋 [REHYDRATE] Found ${pgLabels.length} historical labels in PostgreSQL. Syncing into local SQLite...`);
+    
+    // We execute the inserts in a loop using labelerServer.db.execute.
+    // "INSERT OR IGNORE" ensures that we don't crash or create duplicates if some records already exist.
+    let syncedCount = 0;
+    for (const label of pgLabels) {
+      await labelerServer.db.execute({
+        sql: `
+          INSERT OR IGNORE INTO labels (id, src, uri, cid, val, neg, cts, exp, sig)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          label.id,
+          label.src,
+          label.uri,
+          label.cid,
+          label.val,
+          label.neg ? 1 : 0,
+          label.cts,
+          label.exp,
+          label.sig,
+        ],
+      });
+      syncedCount++;
+    }
+
+    console.log(`✅ [REHYDRATE] Successfully synced ${syncedCount} labels into the local SQLite database!`);
+  } catch (err) {
+    console.error('❌ Failed to rehydrate SQLite database from PostgreSQL:', err);
+  }
 }
 
 /**
@@ -207,10 +256,32 @@ export async function issueLabelsForPost(
           val: token,
           neg: false,
         });
+
+        // Fetch the newly inserted row from SQLite to get the sequence id and signature
+        const res = await labelerServer.db.execute({
+          sql: 'SELECT * FROM labels WHERE uri = ? AND val = ? ORDER BY id DESC LIMIT 1',
+          args: [uri, token],
+        });
+
+        if (res.rows && res.rows.length > 0) {
+          const row = res.rows[0];
+          await syncLabelToPostgres({
+            id: Number(row.id),
+            src: String(row.src),
+            uri: String(row.uri),
+            cid: row.cid ? String(row.cid) : null,
+            val: String(row.val),
+            neg: Boolean(row.neg),
+            cts: String(row.cts),
+            exp: row.exp ? String(row.exp) : null,
+            sig: row.sig ? (Buffer.isBuffer(row.sig) ? row.sig : Buffer.from(row.sig as any)) : null,
+          });
+          console.log(`🔋 [DOUBLE-WRITE] Synced label ${row.id} to PostgreSQL for token: ${token}`);
+        }
       }
-      console.log(`✅ Successfully published labels to ATProto for: ${uri}`);
+      console.log(`✅ Successfully published and synchronized labels to ATProto/PostgreSQL for: ${uri}`);
     } catch (error) {
-      console.error(`❌ Failed to publish labels to ATProto for ${uri}:`, error);
+      console.error(`❌ Failed to publish and sync labels to ATProto/PostgreSQL for ${uri}:`, error);
     }
   } else {
     console.log(`[DRY RUN] Would publish labels: ${JSON.stringify(labelTokens)} for URI: ${uri}`);

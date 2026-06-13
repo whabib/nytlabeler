@@ -6,7 +6,7 @@ if (typeof global.WebSocket === 'undefined') {
 }
 
 import { validateConfig } from './config.js';
-import { loadActiveAuthors, stats } from './labeler.js';
+import { loadActiveAuthors, stats, rehydrateDatabase } from './labeler.js';
 import { startFirehoseListener } from './jetstream.js';
 import { startWebServer } from './server.js';
 import { loadSetting } from './database.js';
@@ -19,6 +19,9 @@ async function bootstrap() {
 
   // 2. Load and cache active authors from PostgreSQL database
   await loadActiveAuthors();
+
+  // 2.5. Rehydrate local SQLite sequence from PostgreSQL
+  await rehydrateDatabase();
 
   // 3. Connect to Jetstream and start processing firehose posts if enabled
   const firehoseEnabledSetting = await loadSetting('firehose_enabled', 'true');

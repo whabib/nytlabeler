@@ -221,3 +221,100 @@ export async function loadSetting(key: string, defaultValue: string): Promise<st
     return defaultValue;
   }
 }
+
+export interface LabelRecord {
+  id: number;
+  src: string;
+  uri: string;
+  cid: string | null;
+  val: string;
+  neg: boolean;
+  cts: string;
+  exp: string | null;
+  sig: Buffer | null;
+}
+
+/**
+ * Synchronizes an issued label record to the environment-aware PostgreSQL table.
+ */
+export async function syncLabelToPostgres(label: LabelRecord): Promise<void> {
+  const sql = `
+    INSERT INTO "_Labels" (environment, id, src, uri, cid, val, neg, cts, exp, sig)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (environment, id) DO UPDATE SET
+      src = EXCLUDED.src,
+      uri = EXCLUDED.uri,
+      cid = EXCLUDED.cid,
+      val = EXCLUDED.val,
+      neg = EXCLUDED.neg,
+      cts = EXCLUDED.cts,
+      exp = EXCLUDED.exp,
+      sig = EXCLUDED.sig;
+  `;
+  try {
+    await pool.query(sql, [
+      ENV,
+      label.id,
+      label.src,
+      label.uri,
+      label.cid,
+      label.val,
+      label.neg,
+      label.cts,
+      label.exp,
+      label.sig,
+    ]);
+  } catch (err) {
+    console.error(`❌ Failed to sync label ${label.id} to PostgreSQL:`, err);
+  }
+}
+
+/**
+ * Loads all historical labels for the current environment from PostgreSQL.
+ * Auto-creates the environment-aware "_Labels" table if it does not exist yet.
+ */
+export async function fetchLabelsFromPostgres(): Promise<LabelRecord[]> {
+  const sql = `
+    SELECT id, src, uri, cid, val, neg, cts, exp, sig 
+    FROM "_Labels" 
+    WHERE environment = $1 
+    ORDER BY id ASC;
+  `;
+  try {
+    const res = await pool.query(sql, [ENV]);
+    return res.rows.map((row) => ({
+      id: parseInt(row.id, 10),
+      src: row.src,
+      uri: row.uri,
+      cid: row.cid || null,
+      val: row.val,
+      neg: !!row.neg,
+      cts: row.cts instanceof Date ? row.cts.toISOString() : String(row.cts),
+      exp: row.exp ? (row.exp instanceof Date ? row.exp.toISOString() : String(row.exp)) : null,
+      sig: row.sig || null,
+    }));
+  } catch (err) {
+    try {
+      console.log('🔄 Creating "_Labels" PostgreSQL table (environment-aware)...');
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS "_Labels" (
+          environment VARCHAR(50) NOT NULL,
+          id INT NOT NULL,
+          src VARCHAR(255) NOT NULL,
+          uri VARCHAR(511) NOT NULL,
+          cid VARCHAR(255),
+          val VARCHAR(255) NOT NULL,
+          neg BOOLEAN DEFAULT FALSE,
+          cts TIMESTAMP NOT NULL,
+          exp TIMESTAMP,
+          sig BYTEA,
+          PRIMARY KEY (environment, id)
+        );
+      `);
+    } catch (createErr) {
+      console.error('❌ Failed to auto-create _Labels table:', createErr);
+    }
+    return [];
+  }
+}
+
