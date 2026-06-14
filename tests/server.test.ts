@@ -10,7 +10,7 @@ process.env.DRY_RUN = 'true';
 
 // Dynamically import to ensure process.env is read correctly
 const { server, wss, labelerProxyWss } = await import('../src/server.js');
-const { setLabelerServer } = await import('../src/labeler.js');
+const { setLabelerServer, setLocalMaxId } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 
 describe('WebSocket Protocol Proxy', () => {
@@ -168,5 +168,101 @@ describe('WebSocket Protocol Proxy', () => {
 
     clientWs.close();
     await targetClosePromise;
+  });
+
+  test('should successfully invoke ensureDatabaseSequence when connecting with a cursor', async () => {
+    // 1. Setup mock pool and spy server
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+
+    let executeCalledCount = 0;
+    let createLabelCalledCount = 0;
+
+    const spyServer = {
+      createLabel: async (label: any) => {
+        createLabelCalledCount++;
+      },
+      db: {
+        execute: async (query: any) => {
+          if (query.sql.includes('MAX(id)')) {
+            executeCalledCount++;
+            return { rows: [{ id: 5 }] };
+          }
+          if (query.sql.includes('SELECT * FROM labels')) {
+            return {
+              rows: [
+                {
+                  id: 6,
+                  src: 'did:plc:mock',
+                  uri: query.args[0],
+                  val: 'dummy-sequence-pad',
+                  neg: 0,
+                  cts: new Date().toISOString(),
+                  exp: null,
+                  sig: new Uint8Array([1, 2, 3])
+                }
+              ]
+            };
+          }
+          return { rows: [] };
+        }
+      }
+    };
+
+    setLabelerServer(spyServer as any);
+    setLocalMaxId(0); // Ensure the cursor (6) is larger than localMaxId to trigger padding
+
+    // 2. Clear any existing connections on the mock target
+    mockTargetConnections = [];
+
+    // 3. Connect via WebSocket with a cursor parameter
+    const clientWs = new WebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+
+    // 4. Wait for connection to open and proxy to target
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Connection with cursor timeout')), 2000);
+      clientWs.on('open', () => {
+        const checkTarget = setInterval(() => {
+          if (mockTargetConnections.length > 0) {
+            clearInterval(checkTarget);
+            clearTimeout(timeout);
+            resolve();
+          }
+        }, 50);
+      });
+    });
+
+    const targetWs = mockTargetConnections[0];
+    assert.ok(targetWs);
+
+    // 5. Assert that ensureDatabaseSequence was called and executed padding
+    assert.ok(executeCalledCount > 0, 'Should have queried sqlite for MAX(id) during padding');
+    assert.ok(createLabelCalledCount > 0, 'Should have called createLabel to pad the sequence gaps');
+
+    // 6. Test that proxy is still functional and proxies messages
+    const targetMsgPromise = new Promise<string>((resolve) => {
+      targetWs.once('message', (data) => {
+        resolve(data.toString());
+      });
+    });
+
+    clientWs.send('hello-cursor-test');
+    const receivedByTarget = await targetMsgPromise;
+    assert.strictEqual(receivedByTarget, 'hello-cursor-test');
+
+    // 7. Cleanup connection
+    const targetClosePromise = new Promise<void>((resolve) => {
+      targetWs.once('close', () => {
+        resolve();
+      });
+    });
+
+    clientWs.close();
+    await targetClosePromise;
+
+    // 8. Restore original helpers & mock server
+    pool.query = originalQuery;
+    setLocalMaxId(0);
+    setLabelerServer({ mock: true });
   });
 });
