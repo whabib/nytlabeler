@@ -6,7 +6,7 @@ if (typeof global.WebSocket === 'undefined') {
 }
 
 import { validateConfig } from './config.js';
-import { loadActiveAuthors, stats } from './labeler.js';
+import { loadActiveAuthors, stats, rehydrateDatabase, initRehydrationGate } from './labeler.js';
 import { startFirehoseListener } from './jetstream.js';
 import { startWebServer } from './server.js';
 import { loadSetting } from './database.js';
@@ -17,10 +17,19 @@ async function bootstrap() {
   // 1. Validate environment configuration
   validateConfig();
 
-  // 2. Load and cache active authors from PostgreSQL database
+  // 1.5. Initialize the rehydration gate before starting the web server
+  initRehydrationGate();
+
+  // 2. Start the web server immediately to bind port 4100/4101 and avoid Cloud Run startup timeouts/probe failures
+  startWebServer();
+
+  // 3. Load and cache active authors from PostgreSQL database
   await loadActiveAuthors();
 
-  // 3. Connect to Jetstream and start processing firehose posts if enabled
+  // 4. Rehydrate local SQLite sequence from PostgreSQL
+  await rehydrateDatabase();
+
+  // 5. Connect to Jetstream and start processing firehose posts if enabled
   const firehoseEnabledSetting = await loadSetting('firehose_enabled', 'true');
   if (firehoseEnabledSetting === 'true') {
     startFirehoseListener();
@@ -29,8 +38,7 @@ async function bootstrap() {
     console.log('🔌 Skipped starting Jetstream firehose listener because it was persistently toggled OFF.');
   }
 
-  // 4. Boot up the control panel web dashboard
-  startWebServer();
+  console.log('✅ NY Times Bluesky Labeler Service fully bootstrapped and active!');
 }
 
 bootstrap().catch((error) => {

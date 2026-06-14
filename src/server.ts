@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
-import { recentLabels, stats, IssuedLabelLog, labelerServer } from './labeler.js';
+import { recentLabels, stats, IssuedLabelLog, labelerServer, ensureDatabaseSequence } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
@@ -76,8 +76,15 @@ wss.on('connection', (ws, request) => {
 });
 
 // Handle connections to the Labeler Proxy WebSocket Server
-labelerProxyWss.on('connection', (clientWs, request) => {
+labelerProxyWss.on('connection', async (clientWs, request) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+  const cursorStr = urlObj.searchParams.get('cursor');
+  const cursor = cursorStr && /^\d+$/.test(cursorStr) ? Number(cursorStr) : NaN;
+
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
+    await ensureDatabaseSequence(cursor);
+  }
+
   const targetUrl = `ws://127.0.0.1:${LABELER_PORT}${urlObj.pathname}${urlObj.search}`;
   
   console.log(`🔌 Establishing protocol-level proxy connection to LabelerServer: ${targetUrl}`);
@@ -159,7 +166,15 @@ labelerProxyWss.on('connection', (clientWs, request) => {
  * Handle upgrade requests from HTTP to WebSocket.
  */
 server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
+  let pathname = '';
+  try {
+    pathname = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`).pathname;
+  } catch (err) {
+    console.warn('⚠️ Failed to parse URL in upgrade handler:', err);
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   if (pathname === '/ws') {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
@@ -175,6 +190,8 @@ server.on('upgrade', (request, socket, head) => {
       labelerProxyWss.emit('connection', ws, request);
     });
   } else {
+    console.warn(`⚠️ Rejecting invalid WebSocket upgrade request on path: ${pathname}`);
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
     socket.destroy();
   }
 });
