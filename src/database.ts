@@ -145,9 +145,14 @@ export async function getDistinctCategories(): Promise<{ sections: string[]; sub
     const sectionRes = await pool.query('SELECT DISTINCT section FROM "Article" WHERE section IS NOT NULL AND section != \'\' ORDER BY section ASC;');
     const subRes = await pool.query('SELECT DISTINCT subsection FROM "Article" WHERE subsection IS NOT NULL AND subsection != \'\' ORDER BY subsection ASC;');
     
+    const formatCategory = (name: string) => name.toLowerCase() === 'us' ? 'US' : name;
+
+    const sections = Array.from(new Set(sectionRes.rows.map(r => formatCategory(r.section))));
+    const subsections = Array.from(new Set(subRes.rows.map(r => r.subsection ? formatCategory(r.subsection) : ''))).filter(s => s !== '');
+
     return {
-      sections: sectionRes.rows.map(r => r.section),
-      subsections: subRes.rows.map(r => r.subsection)
+      sections,
+      subsections
     };
   } catch (error) {
     console.error('Database error fetching categories:', error);

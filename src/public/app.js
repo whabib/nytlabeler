@@ -246,7 +246,8 @@ document.addEventListener('DOMContentLoaded', () => {
           // If contains hyphen and not section, likely author
           cls += ' author';
         }
-        return `<span class="${cls}">${l}</span>`;
+        const displayText = l === 'us' ? 'US' : l;
+        return `<span class="${cls}">${displayText}</span>`;
       }).join(' ');
 
       // Build safe external links

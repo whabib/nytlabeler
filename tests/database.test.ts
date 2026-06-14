@@ -1,6 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
-import { normalizeNytUrl, slugify, saveSetting, loadSetting, pool } from '../src/database.js';
+import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, pool } from '../src/database.js';
 
 describe('Database Helpers', () => {
   describe('normalizeNytUrl', () => {
@@ -150,6 +150,43 @@ describe('Database Helpers', () => {
       assert.strictEqual(loaded, 'true');
       assert.ok(createdTable, 'Should have attempted to create settings table');
       assert.ok(checkedColumns, 'Should have checked column schemas for environment column existence');
+    });
+  });
+
+  describe('getDistinctCategories', () => {
+    test('should format "us" as "US" and deduplicate results', async (t) => {
+      // Mock pool.query to simulate rows with varying casings of 'us'
+      t.mock.method(pool, 'query', async (sql: string) => {
+        const sqlNormalized = sql.trim().replace(/\s+/g, ' ');
+        if (sqlNormalized.includes('SELECT DISTINCT section')) {
+          return {
+            rows: [
+              { section: 'travel' },
+              { section: 'us' },
+              { section: 'US' },
+              { section: 'Us' }
+            ]
+          };
+        }
+        if (sqlNormalized.includes('SELECT DISTINCT subsection')) {
+          return {
+            rows: [
+              { subsection: 'politics' },
+              { subsection: 'us' },
+              { subsection: null }
+            ]
+          };
+        }
+        return { rows: [] };
+      });
+
+      const categories = await getDistinctCategories();
+      
+      // 'travel' remains, while 'us', 'US', 'Us' are mapped to 'US' and deduplicated
+      assert.deepStrictEqual(categories.sections, ['travel', 'US']);
+      
+      // 'politics' remains, 'us' becomes 'US', and null/empty is filtered out
+      assert.deepStrictEqual(categories.subsections, ['politics', 'US']);
     });
   });
 
