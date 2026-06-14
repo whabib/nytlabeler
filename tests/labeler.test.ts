@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer, rehydrateDatabase, setLocalMaxId, localMaxId } from '../src/labeler.js';
+import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, ensureDatabaseSequence, setLabelerServer, rehydrateDatabase, setLocalMaxId, localMaxId, initRehydrationGate } from '../src/labeler.js';
 import { pool } from '../src/database.js';
 
 describe('Labeler Logic', () => {
@@ -274,6 +274,45 @@ describe('Labeler Logic', () => {
 
     // Reset localMaxId and server
     setLocalMaxId(0);
+    setLabelerServer(null);
+  });
+
+  test('ensureDatabaseSequence should wait for rehydration gate to resolve before executing', async () => {
+    // 1. Arm the rehydration gate
+    initRehydrationGate();
+
+    let resolved = false;
+    const mockServer = {
+      db: {
+        execute: async (query: any) => {
+          if (query.sql.includes('MAX(id)')) {
+            return { rows: [{ id: 5 }] };
+          }
+          return { rows: [] };
+        }
+      }
+    };
+    setLabelerServer(mockServer as any);
+
+    // 2. Start the call but don't await yet
+    const callPromise = ensureDatabaseSequence(5).then(() => {
+      resolved = true;
+    });
+
+    // 3. Yield event loop to let promise chains run
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.strictEqual(resolved, false, 'Should be blocked because the gate is armed and pending');
+
+    // 4. Resolve the gate (by mimicking a successful rehydrateDatabase)
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+    await rehydrateDatabase();
+    pool.query = originalQuery;
+
+    // 5. Now the gate should be open and the call should be resolved
+    await callPromise;
+    assert.strictEqual(resolved, true, 'Should resolve once the gate is opened by rehydration');
+
     setLabelerServer(null);
   });
 

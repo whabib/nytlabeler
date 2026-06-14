@@ -10,7 +10,7 @@
     "build": "tsc",
     "publish-definitions": "tsx src/publish-definitions.ts",
     "setup-labeler": "npx @skyware/labeler setup",
-    "test": "tsx --test"
+    "test": "tsx --test tests/database.test.ts tests/jetstream.test.ts tests/labeler.test.ts tests/server.test.ts"
   },
   "dependencies": {
     "@atproto/api": "^0.13.11",

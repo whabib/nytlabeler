@@ -96,6 +96,20 @@ if (!DRY_RUN && DID && SIGNING_KEY) {
 
 export let localMaxId = 0;
 
+// Rehydration gate promise and resolver to hold incoming cursor requests on startup
+let resolveRehydration: () => void = () => {};
+export let rehydrationComplete = Promise.resolve();
+
+/**
+ * Initializes/arms the startup rehydration gate.
+ */
+export function initRehydrationGate(): void {
+  console.log('🔌 [REHYDRATE GATE] Arming startup rehydration gate...');
+  rehydrationComplete = new Promise<void>((resolve) => {
+    resolveRehydration = resolve;
+  });
+}
+
 /**
  * Sets the localMaxId sequence cache value. Useful for unit testing.
  */
@@ -162,6 +176,8 @@ export async function rehydrateDatabase(): Promise<void> {
     } catch (dbErr) {
       console.error('❌ Failed to initialize localMaxId from SQLite:', dbErr);
     }
+    // Resolve the rehydration gate so waiting cursor queries can proceed
+    resolveRehydration();
   }
 }
 let seqSyncPromise: Promise<void> | null = null;
@@ -173,6 +189,9 @@ let seqSyncPromise: Promise<void> | null = null;
 export async function ensureDatabaseSequence(cursor: number): Promise<void> {
   if (!labelerServer) return;
   if (Number.isNaN(cursor) || cursor <= 0) return;
+
+  // Wait for database rehydration to finish before proceeding
+  await rehydrationComplete;
 
   // Fast-path sequence cache: exit instantly (0ms) without any database queries or locks
   if (cursor <= localMaxId) {

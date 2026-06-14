@@ -151,6 +151,7 @@ DEPLOY_FLAGS=(
   "--concurrency" "1000"
   "--cpu" "2"
   "--memory" "1Gi"
+  "--no-cpu-throttling"
 )
 
 # VPC Egress settings to reach private IP of Cloud SQL
