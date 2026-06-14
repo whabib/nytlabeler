@@ -2,6 +2,10 @@ import { BskyAgent } from '@atproto/api';
 import { getDistinctCategories, getActiveAuthors, slugify } from './database.js';
 import { DID, BSKY_IDENTIFIER, BSKY_PASSWORD, DRY_RUN, validateConfig } from './config.js';
 
+export function formatDisplayName(name: string): string {
+  return name.toUpperCase() === 'US' ? 'US' : (name.charAt(0).toUpperCase() + name.slice(1));
+}
+
 async function publishDefinitions() {
   console.log('📰 Generating and publishing label definitions for NY Times Bluesky Labeler...');
 
@@ -28,7 +32,7 @@ async function publishDefinitions() {
     registeredValues.add(slug);
 
     // Format display name beautifully
-    const formattedName = section.toUpperCase() === 'US' ? 'US' : (section.charAt(0).toUpperCase() + section.slice(1));
+    const formattedName = formatDisplayName(section);
 
     definitions.push({
       identifier: slug,
@@ -51,7 +55,7 @@ async function publishDefinitions() {
     if (!slug || registeredValues.has(slug)) continue;
     registeredValues.add(slug);
 
-    const formattedName = sub.toUpperCase() === 'US' ? 'US' : (sub.charAt(0).toUpperCase() + sub.slice(1));
+    const formattedName = formatDisplayName(sub);
 
     definitions.push({
       identifier: slug,
