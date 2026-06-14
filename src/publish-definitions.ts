@@ -28,7 +28,7 @@ async function publishDefinitions() {
     registeredValues.add(slug);
 
     // Format display name beautifully
-    const formattedName = section.charAt(0).toUpperCase() + section.slice(1);
+    const formattedName = section.toUpperCase() === 'US' ? 'US' : (section.charAt(0).toUpperCase() + section.slice(1));
 
     definitions.push({
       identifier: slug,
@@ -51,7 +51,7 @@ async function publishDefinitions() {
     if (!slug || registeredValues.has(slug)) continue;
     registeredValues.add(slug);
 
-    const formattedName = sub.charAt(0).toUpperCase() + sub.slice(1);
+    const formattedName = sub.toUpperCase() === 'US' ? 'US' : (sub.charAt(0).toUpperCase() + sub.slice(1));
 
     definitions.push({
       identifier: slug,
