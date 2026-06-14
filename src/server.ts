@@ -79,9 +79,9 @@ wss.on('connection', (ws, request) => {
 labelerProxyWss.on('connection', async (clientWs, request) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
   const cursorStr = urlObj.searchParams.get('cursor');
-  const cursor = parseInt(cursorStr ?? 'NaN', 10);
+  const cursor = cursorStr && /^\d+$/.test(cursorStr) ? Number(cursorStr) : NaN;
 
-  if (!Number.isNaN(cursor) && cursor > 0) {
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
     await ensureDatabaseSequence(cursor);
   }
 

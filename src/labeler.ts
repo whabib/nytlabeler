@@ -2,7 +2,7 @@ import { LabelerServer } from '@skyware/labeler';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DID, SIGNING_KEY, DRY_RUN } from './config.js';
-import { getActiveAuthors, slugify, syncLabelToPostgres, fetchLabelsFromPostgres, LabelRecord } from './database.js';
+import { getActiveAuthors, slugify, syncLabelToPostgres, fetchLabelsFromPostgres } from './database.js';
 
 // Define matching types
 export interface IssuedLabelLog {
@@ -393,7 +393,7 @@ export async function issueLabelsForPost(
       }
       console.log(`✅ Successfully published and synchronized labels to ATProto/PostgreSQL for: ${uri}`);
     } catch (error) {
-      console.error(`❌ Failed to publish and sync labels to ATProto/PostgreSQL for ${uri}:`, error);
+      console.error('❌ Failed to publish and sync labels to ATProto/PostgreSQL for %s:', uri, error);
     }
   } else {
     console.log(`[DRY RUN] Would publish labels: ${JSON.stringify(labelTokens)} for URI: ${uri}`);
