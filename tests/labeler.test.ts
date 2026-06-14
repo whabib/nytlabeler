@@ -53,7 +53,24 @@ describe('Labeler Logic', () => {
     assert.strictEqual(recentLabels.length, 1);
     const log = recentLabels[0];
     // 'ross-douthat' is active, but 'unpublished-author' is ignored!
-    assert.deepStrictEqual(log.labels, ['opinion', 'ross-douthat']);
+  });
+
+  test('should generate labels in the correct order: section, subsection, then author', async () => {
+    await issueLabelsForPost(
+      'at://did:plc:mock/app.bsky.feed.post/order-test',
+      'did:plc:author',
+      'An opinion piece about international travel',
+      {
+        section: 'opinion',
+        subsection: 'travel',
+        authors: ['Ross Douthat'],
+        title: 'Mock Column About Travel'
+      }
+    );
+
+    assert.strictEqual(recentLabels.length, 1);
+    const log = recentLabels[0];
+    assert.deepStrictEqual(log.labels, ['opinion', 'travel', 'ross-douthat']);
   });
 
   test('should emit no labels when category/subsection is empty and no authors match criteria', async () => {
