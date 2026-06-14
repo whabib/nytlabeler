@@ -1,6 +1,8 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
 import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, pool } from '../src/database.js';
+import { formatDisplayName } from '../src/utils.js';
+
 
 describe('Database Helpers', () => {
   describe('normalizeNytUrl', () => {
@@ -187,6 +189,20 @@ describe('Database Helpers', () => {
       
       // 'politics' remains, 'us' becomes 'US', and null/empty is filtered out
       assert.deepStrictEqual(categories.subsections, ['politics', 'US']);
+    });
+  });
+
+  describe('formatDisplayName', () => {
+    test('should format "us" as "US" case-insensitively', () => {
+      assert.strictEqual(formatDisplayName('us'), 'US');
+      assert.strictEqual(formatDisplayName('Us'), 'US');
+      assert.strictEqual(formatDisplayName('US'), 'US');
+    });
+
+    test('should capitalize first letter of other categories', () => {
+      assert.strictEqual(formatDisplayName('politics'), 'Politics');
+      assert.strictEqual(formatDisplayName('travel'), 'Travel');
+      assert.strictEqual(formatDisplayName('opinion'), 'Opinion');
     });
   });
 
