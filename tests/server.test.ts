@@ -265,4 +265,84 @@ describe('WebSocket Protocol Proxy', () => {
     setLocalMaxId(0);
     setLabelerServer({ mock: true });
   });
+
+  test('should ignore invalid cursor parameter and proxy successfully', async () => {
+    // 1. Setup mock pool and spy server
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+
+    let executeCalledCount = 0;
+    let createLabelCalledCount = 0;
+
+    const spyServer = {
+      createLabel: async (label: any) => {
+        createLabelCalledCount++;
+      },
+      db: {
+        execute: async (query: any) => {
+          if (query.sql.includes('MAX(id)')) {
+            executeCalledCount++;
+            return { rows: [{ id: 5 }] };
+          }
+          return { rows: [] };
+        }
+      }
+    };
+
+    setLabelerServer(spyServer as any);
+    setLocalMaxId(0);
+
+    // 2. Clear any existing connections on the mock target
+    mockTargetConnections = [];
+
+    // 3. Connect via WebSocket with an invalid cursor parameter
+    const clientWs = new WebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=invalid123');
+
+    // 4. Wait for connection to open and proxy to target
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Connection with invalid cursor timeout')), 2000);
+      clientWs.on('open', () => {
+        const checkTarget = setInterval(() => {
+          if (mockTargetConnections.length > 0) {
+            clearInterval(checkTarget);
+            clearTimeout(timeout);
+            resolve();
+          }
+        }, 50);
+      });
+    });
+
+    const targetWs = mockTargetConnections[0];
+    assert.ok(targetWs);
+
+    // 5. Assert that ensureDatabaseSequence was NOT called
+    assert.strictEqual(executeCalledCount, 0, 'Should NOT have queried sqlite for MAX(id) for invalid cursor');
+    assert.strictEqual(createLabelCalledCount, 0, 'Should NOT have padded sequence for invalid cursor');
+
+    // 6. Test that proxy is functional
+    const targetMsgPromise = new Promise<string>((resolve) => {
+      targetWs.once('message', (data) => {
+        resolve(data.toString());
+      });
+    });
+
+    clientWs.send('hello-invalid-cursor');
+    const receivedByTarget = await targetMsgPromise;
+    assert.strictEqual(receivedByTarget, 'hello-invalid-cursor');
+
+    // 7. Cleanup connection
+    const targetClosePromise = new Promise<void>((resolve) => {
+      targetWs.once('close', () => {
+        resolve();
+      });
+    });
+
+    clientWs.close();
+    await targetClosePromise;
+
+    // 8. Restore original helpers & mock server
+    pool.query = originalQuery;
+    setLocalMaxId(0);
+    setLabelerServer({ mock: true });
+  });
 });
