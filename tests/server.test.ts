@@ -25,6 +25,7 @@ describe('WebSocket Protocol Proxy', () => {
     mockTargetWss = new WebSocketServer({ port: 14101, host: '127.0.0.1' });
     mockTargetWss.on('connection', (ws) => {
       mockTargetConnections.push(ws);
+      ws.on('error', () => {}); // Prevent unhandled socket errors from crashing process during teardown
     });
 
     // 3. Start the main proxy server on PORT (14100)
@@ -69,6 +70,16 @@ describe('WebSocket Protocol Proxy', () => {
       }),
       new Promise<void>((resolve) => {
         server.close(() => {
+          resolve();
+        });
+      }),
+      new Promise<void>((resolve) => {
+        wss.close(() => {
+          resolve();
+        });
+      }),
+      new Promise<void>((resolve) => {
+        labelerProxyWss.close(() => {
           resolve();
         });
       }),
@@ -118,6 +129,7 @@ describe('WebSocket Protocol Proxy', () => {
 
   test('should successfully proxy bidirectional messages', async () => {
     const clientWs = new WebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels');
+    clientWs.on('error', () => {}); // Prevent unhandled socket errors from crashing process
     
     // Wait for both client and target connections to be established
     await new Promise<void>((resolve, reject) => {
@@ -217,6 +229,7 @@ describe('WebSocket Protocol Proxy', () => {
 
     // 3. Connect via WebSocket with a cursor parameter
     const clientWs = new WebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+    clientWs.on('error', () => {}); // Prevent unhandled socket errors from crashing process
 
     // 4. Wait for connection to open and proxy to target
     await new Promise<void>((resolve, reject) => {
@@ -297,6 +310,7 @@ describe('WebSocket Protocol Proxy', () => {
 
     // 3. Connect via WebSocket with an invalid cursor parameter
     const clientWs = new WebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=invalid123');
+    clientWs.on('error', () => {}); // Prevent unhandled socket errors from crashing process
 
     // 4. Wait for connection to open and proxy to target
     await new Promise<void>((resolve, reject) => {
