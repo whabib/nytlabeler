@@ -1,10 +1,8 @@
 import { BskyAgent } from '@atproto/api';
+import { fileURLToPath } from 'url';
 import { getDistinctCategories, getActiveAuthors, slugify } from './database.js';
 import { DID, BSKY_IDENTIFIER, BSKY_PASSWORD, DRY_RUN, validateConfig } from './config.js';
-
-export function formatDisplayName(name: string): string {
-  return name.toUpperCase() === 'US' ? 'US' : (name.charAt(0).toUpperCase() + name.slice(1));
-}
+import { formatDisplayName } from './utils.js';
 
 async function publishDefinitions() {
   console.log('📰 Generating and publishing label definitions for NY Times Bluesky Labeler...');
@@ -147,7 +145,15 @@ async function publishDefinitions() {
   }
 }
 
-// Execute script
-publishDefinitions().then(() => {
-  process.exit(0);
-});
+// Execute script only when run directly as a CLI
+const isMain = process.argv[1] && (
+  process.argv[1] === fileURLToPath(import.meta.url) ||
+  process.argv[1].endsWith('publish-definitions.ts') ||
+  process.argv[1].endsWith('publish-definitions.js')
+);
+
+if (isMain) {
+  publishDefinitions().then(() => {
+    process.exit(0);
+  });
+}

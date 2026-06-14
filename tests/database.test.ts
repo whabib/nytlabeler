@@ -1,7 +1,8 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
 import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, pool } from '../src/database.js';
-import { formatDisplayName } from '../src/publish-definitions.js';
+import { formatDisplayName } from '../src/utils.js';
+
 
 describe('Database Helpers', () => {
   describe('normalizeNytUrl', () => {
