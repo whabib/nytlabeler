@@ -76,7 +76,8 @@ wss.on('connection', (ws, request) => {
 });
 
 // Handle connections to the Labeler Proxy WebSocket Server
-labelerProxyWss.on('connection', async (clientWs, request) => {
+labelerProxyWss.on('connection', (clientWs, request) => {
+  (async (clientWs: WebSocket, request: http.IncomingMessage) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
   const cursorStr = urlObj.searchParams.get('cursor');
   const cursor = cursorStr && /^\d+$/.test(cursorStr) ? Number(cursorStr) : NaN;
@@ -159,6 +160,9 @@ labelerProxyWss.on('connection', async (clientWs, request) => {
     console.error('❌ WS Proxy: LabelerServer WebSocket Error:', err);
     clientWs.terminate();
     cleanup();
+  });
+  })(clientWs, request).catch((err) => {
+    console.error('❌ WS Proxy: Unhandled error in proxy connection handler:', err);
   });
 });
 
