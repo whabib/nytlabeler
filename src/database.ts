@@ -92,7 +92,8 @@ export async function lookupArticle(url: string): Promise<ArticleMatch | null> {
 
 /**
  * Gets the restricted list of published authors:
- * Authors who have articles in the 'opinion' section and have authored > 1 article in total.
+ * Authors who have written >= 2 articles in the 'opinion' section,
+ * OR >= 2 articles in the 'us' section and 'politics' subsection (case-insensitive).
  */
 export async function getActiveAuthors(): Promise<{ id: number; name: string; total_articles: number }[]> {
   const sql = `
@@ -101,13 +102,14 @@ export async function getActiveAuthors(): Promise<{ id: number; name: string; to
     JOIN "_ArticleToAuthor" j ON auth.id = j."B"
     JOIN "Article" a ON j."A" = a.id
     WHERE auth.id IN (
-      SELECT DISTINCT j2."B"
+      SELECT j2."B"
       FROM "_ArticleToAuthor" j2
       JOIN "Article" a2 ON j2."A" = a2.id
-      WHERE a2.section = 'opinion'
+      GROUP BY j2."B"
+      HAVING SUM(CASE WHEN a2.section = 'opinion' THEN 1 ELSE 0 END) >= 2
+          OR SUM(CASE WHEN LOWER(a2.section) = 'us' AND LOWER(a2.subsection) = 'politics' THEN 1 ELSE 0 END) >= 2
     )
     GROUP BY auth.id, auth.name
-    HAVING COUNT(j."A") > 1
     ORDER BY total_articles DESC, auth.name ASC;
   `;
   
@@ -123,6 +125,7 @@ export async function getActiveAuthors(): Promise<{ id: number; name: string; to
     return [];
   }
 }
+
 
 /**
  * Helper to slugify names/labels for ATProto compliance.
