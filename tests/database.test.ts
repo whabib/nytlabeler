@@ -1,6 +1,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
-import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, pool } from '../src/database.js';
+import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, getActiveAuthors, pool } from '../src/database.js';
+
 import { formatDisplayName } from '../src/utils.js';
 
 
@@ -192,7 +193,30 @@ describe('Database Helpers', () => {
     });
   });
 
+  describe('getActiveAuthors', () => {
+    test('should fetch authors meeting opinion >= 2 or us/politics >= 2 with correct casing logic', async (t) => {
+      t.mock.method(pool, 'query', async (sql: string) => {
+        assert.ok(sql.includes("section = 'opinion'"));
+        assert.ok(sql.includes("LOWER(a2.section) = 'us'"));
+        assert.ok(sql.includes("LOWER(a2.subsection) = 'politics'"));
+
+        return {
+          rows: [
+            { id: '1', name: 'Opinion Writer', total_articles: '3' },
+            { id: '2', name: 'US Politics Writer', total_articles: '2' },
+          ]
+        };
+      });
+
+      const authors = await getActiveAuthors();
+      assert.strictEqual(authors.length, 2);
+      assert.deepStrictEqual(authors[0], { id: 1, name: 'Opinion Writer', total_articles: 3 });
+      assert.deepStrictEqual(authors[1], { id: 2, name: 'US Politics Writer', total_articles: 2 });
+    });
+  });
+
   describe('formatDisplayName', () => {
+
     test('should format "us" as "US" case-insensitively', () => {
       assert.strictEqual(formatDisplayName('us'), 'US');
       assert.strictEqual(formatDisplayName('Us'), 'US');
