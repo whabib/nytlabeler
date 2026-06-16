@@ -8,15 +8,16 @@ process.env.PORT = '14100';
 process.env.LABELER_PORT = '14101';
 process.env.DRY_RUN = 'true';
 
-// 1. Add process-wide error handling to catch unhandled errors/rejections before the runner IPC channel does
+// Log unhandled errors for diagnostics but do NOT call process.exit(1) — doing so overrides the
+// Node.js test runner's own uncaughtException/unhandledRejection handlers, causing it to exit
+// abruptly while the IPC channel has an in-flight write, corrupting the message and producing:
+//   "Error: Unable to deserialize cloned data due to invalid or unsupported version"
 process.on('uncaughtException', (err) => {
   console.error('🔥 UNCAUGHT EXCEPTION IN SERVER TEST WORKER:', err);
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('🔥 UNHANDLED REJECTION IN SERVER TEST WORKER:', reason);
-  process.exit(1);
 });
 
 // Helper to convert any error into a simple, clean, serializable Error
