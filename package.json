@@ -9,12 +9,12 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc",
     "publish-definitions": "tsx src/publish-definitions.ts",
-    "setup-labeler": "npx @skyware/labeler setup",
+    "setup-labeler": "npx labeler setup",
     "test": "tsx --test tests/database.test.ts tests/jetstream.test.ts tests/labeler.test.ts tests/server.test.ts"
   },
   "dependencies": {
     "@atproto/api": "^0.13.11",
-    "@skyware/labeler": "^0.2.0",
+    "labeler": "whabib/labeler",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "pg": "^8.12.0",

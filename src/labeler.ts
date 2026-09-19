@@ -1,4 +1,4 @@
-import { LabelerServer } from '@skyware/labeler';
+import { LabelerServer } from 'labeler';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DID, SIGNING_KEY, DRY_RUN } from './config.js';
@@ -184,7 +184,7 @@ let seqSyncPromise: Promise<void> | null = null;
 
 /**
  * Ensures that the local SQLite database has a sequence number at least as large as the requested cursor.
- * This prevents @skyware/labeler from throwing a FutureCursor error and disconnecting the client.
+ * This prevents labeler from throwing a FutureCursor error and disconnecting the client.
  */
 export async function ensureDatabaseSequence(cursor: number): Promise<void> {
   if (!labelerServer) return;
