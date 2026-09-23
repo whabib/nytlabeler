@@ -6,7 +6,7 @@ if (typeof global.WebSocket === 'undefined') {
 }
 
 import { validateConfig } from './config.js';
-import { loadActiveAuthors, stats, rehydrateDatabase, initRehydrationGate } from './labeler.js';
+import { loadActiveAuthors, stats, prepareLabelStore, initLabelStoreGate } from './labeler.js';
 import { startFirehoseListener } from './jetstream.js';
 import { startWebServer } from './server.js';
 import { loadSetting } from './database.js';
@@ -17,8 +17,8 @@ async function bootstrap() {
   // 1. Validate environment configuration
   validateConfig();
 
-  // 1.5. Initialize the rehydration gate before starting the web server
-  initRehydrationGate();
+  // 1.5. Hold labeler requests until the label table is ready, before the web server starts
+  initLabelStoreGate();
 
   // 2. Start the web server immediately to bind port 4100/4101 and avoid Cloud Run startup timeouts/probe failures
   startWebServer();
@@ -26,8 +26,8 @@ async function bootstrap() {
   // 3. Load and cache active authors from PostgreSQL database
   await loadActiveAuthors();
 
-  // 4. Rehydrate local SQLite sequence from PostgreSQL
-  await rehydrateDatabase();
+  // 4. Create the Postgres label table and copy the legacy label history into it on first run
+  await prepareLabelStore();
 
   // 5. Connect to Jetstream and start processing firehose posts if enabled
   const firehoseEnabledSetting = await loadSetting('firehose_enabled', 'true');

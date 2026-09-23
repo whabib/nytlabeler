@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
-import { recentLabels, stats, IssuedLabelLog, labelerServer, ensureDatabaseSequence } from './labeler.js';
+import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 
@@ -78,12 +78,9 @@ wss.on('connection', (ws, request) => {
 // Handle connections to the Labeler Proxy WebSocket Server
 labelerProxyWss.on('connection', async (clientWs, request) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
-  const cursorStr = urlObj.searchParams.get('cursor');
-  const cursor = cursorStr && /^\d+$/.test(cursorStr) ? Number(cursorStr) : NaN;
 
-  if (Number.isSafeInteger(cursor) && cursor > 0) {
-    await ensureDatabaseSequence(cursor);
-  }
+  // Wait for the label table to be ready so a cursor isn't rejected as being in the future
+  await labelStoreReady;
 
   const targetUrl = `ws://127.0.0.1:${LABELER_PORT}${urlObj.pathname}${urlObj.search}`;
   
@@ -241,11 +238,14 @@ setInterval(() => {
 }, 1000).unref();
 
 // Proxy HTTP requests to com.atproto.label (XRPC) to Fastify LabelerServer on LABELER_PORT
-app.use('/xrpc', (req, res) => {
+app.use('/xrpc', async (req, res) => {
   if (!labelerServer) {
     res.status(503).send('LabelerServer not initialized');
     return;
   }
+
+  // Wait for the label table to be ready so queries don't see a partial history
+  await labelStoreReady;
 
   const targetUrl = `http://127.0.0.1:${LABELER_PORT}${req.originalUrl}`;
   console.log(`🔀 Proxying HTTP ${req.method} request to LabelerServer: ${targetUrl}`);

@@ -21,7 +21,7 @@ This document outlines the strict architectural, developmental, and git workflow
 ## 🔌 3. Environment & Database Awareness
 
 *   **Scoping & Sandboxing**: The PostgreSQL database (`nytdata`) is shared across development and production. All database tables, schema operations, and settings keys (such as `_Settings`) must be strictly partitioned and aware of the current active environment (`dev` or `prod`).
-*   **Sequence Robustness**: Ensure that the database sequence synchronization logic (`ensureDatabaseSequence`) and local SQLite state rehydration are fully robust under concurrent container startups.
+*   **Label Store Robustness**: Labels live in the environment's Postgres table (`labeler.labels_<environment>`), whose ids are the subscribeLabels sequence numbers. Startup work on that table (schema creation and the one-time `_Labels` migration) must stay safe under concurrent container startups, and label ids must never be reused or renumbered.
 
 ---
 

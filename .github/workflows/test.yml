@@ -15,6 +15,20 @@ jobs:
     name: Run Tests
     runs-on: ubuntu-latest
 
+    services:
+      # Disposable database for the label migration tests
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -34,3 +48,4 @@ jobs:
           # Run tests with a safe mock state
           DRY_RUN: 'true'
           ENV: 'development'
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
