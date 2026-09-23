@@ -148,6 +148,9 @@ DEPLOY_FLAGS=(
   "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
   "--allow-unauthenticated"
   "--max-instances" "1"
+  # Cloud Run closes WebSocket connections at the request timeout (default 300s), forcing
+  # subscribeLabels clients to reconnect and replay; 3600s is the maximum
+  "--timeout" "3600"
   "--concurrency" "1000"
   "--cpu" "2"
   "--memory" "1Gi"
