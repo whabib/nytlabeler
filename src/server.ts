@@ -295,7 +295,8 @@ app.post('/api/firehose/toggle', async (req, res) => {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
-  const { enabled } = req.body;
+  // Express 5 leaves req.body undefined when the request has no JSON body
+  const { enabled } = req.body ?? {};
   if (enabled === true) {
     startFirehoseListener();
     await saveSetting('firehose_enabled', 'true');
@@ -337,7 +338,8 @@ app.get('/api/categories', async (req, res) => {
 app.use(express.static(path.resolve(__dirname, '../src/public')));
 
 // Fallback all other routes to index.html for single page app experience
-app.get('*', (req, res) => {
+// (Express 5 requires a named wildcard; '/{*splat}' also matches '/')
+app.get('/{*splat}', (req, res) => {
   res.sendFile(path.resolve(__dirname, '../src/public/index.html'));
 });
 
