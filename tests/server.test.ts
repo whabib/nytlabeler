@@ -264,6 +264,33 @@ describe('WebSocket Protocol Proxy', () => {
     setLabelerServer({ mock: true });
   }));
 
+  test('should serve index.html for unknown dashboard routes', cleanErrors(async () => {
+    for (const route of ['/', '/some/client/route']) {
+      const res = await fetch(`http://127.0.0.1:14100${route}`);
+      assert.strictEqual(res.status, 200, `unexpected status for ${route}`);
+      assert.match(res.headers.get('content-type') || '', /text\/html/);
+      assert.match(await res.text(), /<html/i);
+    }
+  }));
+
+  test('should return 400 when firehose toggle has no JSON body', cleanErrors(async () => {
+    const res = await fetch('http://127.0.0.1:14100/api/firehose/toggle', {
+      method: 'POST',
+      headers: { Origin: 'http://127.0.0.1:14100' },
+    });
+    assert.strictEqual(res.status, 400);
+    assert.deepStrictEqual(await res.json(), { error: "Invalid 'enabled' value. Must be a boolean." });
+  }));
+
+  test('should reject cross-origin firehose toggle requests', cleanErrors(async () => {
+    const res = await fetch('http://127.0.0.1:14100/api/firehose/toggle', {
+      method: 'POST',
+      headers: { Origin: 'http://evil.example', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.strictEqual(res.status, 403);
+  }));
+
   test('should successfully proxy bidirectional messages', cleanErrors(async () => {
     clearMockTargetConnections();
     const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels');

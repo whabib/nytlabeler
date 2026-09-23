@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-// Polyfill global WebSocket for @skyware/jetstream in Node.js environments
+// Polyfill global WebSocket in Node.js environments that lack it
 if (typeof global.WebSocket === 'undefined') {
   global.WebSocket = WebSocket as any;
 }
