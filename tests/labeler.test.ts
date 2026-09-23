@@ -157,6 +157,67 @@ describe('Labeler Logic', () => {
     assert.strictEqual(opened, true);
   });
 
+  test('should not publish labels until the label store gate opens', async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [] })) as any;
+    const created: string[] = [];
+    setLabelerServer({
+      createLabel: async (label: any) => {
+        created.push(label.val);
+        const signed = signLabel(
+          { src: 'did:plc:labeler', uri: label.uri, val: label.val, neg: false, cts: '2026-09-23T01:02:03.456Z' },
+          TEST_KEY,
+        );
+        return { id: 1, ...formatLabel(signed) };
+      },
+    });
+    initLabelStoreGate();
+
+    try {
+      const publishing = issueLabelsForPost(
+        'at://did:plc:mock/app.bsky.feed.post/early',
+        'did:plc:author',
+        'Posted during the migration',
+        { section: 'world', subsection: null, authors: [], title: 'Mock' },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepStrictEqual(created, [], 'Nothing should be written while the migration runs');
+
+      // Open the gate (with no server, preparation has nothing to migrate); the post that
+      // arrived earlier is then published through the server it started with
+      setLabelerServer(null);
+      await prepareLabelStore();
+      await publishing;
+      assert.deepStrictEqual(created, ['world']);
+    } finally {
+      pool.query = originalQuery;
+      setLabelerServer(null);
+    }
+  });
+
+  test('should keep the gate closed when label store preparation fails', async () => {
+    initLabelStoreGate();
+    let opened = false;
+    labelStoreReady.then(() => {
+      opened = true;
+    });
+    setLabelerServer({
+      ready: async () => {
+        throw new Error('database unavailable');
+      },
+    });
+
+    try {
+      await assert.rejects(prepareLabelStore(), /database unavailable/);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.strictEqual(opened, false);
+    } finally {
+      // Open the gate so later tests aren't blocked
+      setLabelerServer(null);
+      await prepareLabelStore();
+    }
+  });
+
   test('should use one Postgres label table per environment', () => {
     assert.match(LABELS_TABLE, /^labeler\.labels_[a-z0-9_]+$/);
   });

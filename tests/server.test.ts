@@ -361,6 +361,28 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should not proxy a subscriber that disconnected while waiting for the label store', cleanErrors(async () => {
+    clearMockTargetConnections();
+    initLabelStoreGate();
+
+    try {
+      const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+      await new Promise<void>((resolve, reject) => {
+        clientWs.once('open', () => resolve());
+        clientWs.once('error', reject);
+      });
+      clientWs.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      setLabelerServer(null);
+      await prepareLabelStore();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.strictEqual(mockTargetConnections.length, 0, 'No LabelerServer connection should be opened for a closed client');
+    } finally {
+      setLabelerServer({ mock: true });
+    }
+  }));
+
   test('should hold XRPC HTTP requests until the label store is ready', cleanErrors(async () => {
     initLabelStoreGate();
     try {

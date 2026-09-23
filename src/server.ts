@@ -82,6 +82,11 @@ labelerProxyWss.on('connection', async (clientWs, request) => {
   // Wait for the label table to be ready so a cursor isn't rejected as being in the future
   await labelStoreReady;
 
+  // The subscriber may have given up while waiting; its close event has already fired
+  if (clientWs.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
   const targetUrl = `ws://127.0.0.1:${LABELER_PORT}${urlObj.pathname}${urlObj.search}`;
   
   console.log(`🔌 Establishing protocol-level proxy connection to LabelerServer: ${targetUrl}`);

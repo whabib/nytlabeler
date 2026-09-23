@@ -86,14 +86,11 @@ export function initLabelStoreGate(): void {
 
 /**
  * Waits for the label table to exist, copies the legacy "_Labels" history into it on first
- * run, then opens the startup gate. Throws if the migration fails its signature check.
+ * run, then opens the startup gate. Throws if the migration fails its signature check; the
+ * gate then stays closed (the process exits).
  */
 export async function prepareLabelStore(): Promise<void> {
-  try {
-    if (!labelerServer) {
-      console.log('ℹ️ No LabelerServer initialized. Skipping label store preparation.');
-      return;
-    }
+  if (labelerServer) {
     await labelerServer.ready();
 
     console.log(`🔋 [MIGRATE] Checking whether ${LABELS_TABLE} needs the legacy label history...`);
@@ -112,9 +109,10 @@ export async function prepareLabelStore(): Promise<void> {
           `(${result.checkedSignatures} signatures re-checked).`,
       );
     }
-  } finally {
-    resolveLabelStoreReady();
+  } else {
+    console.log('ℹ️ No LabelerServer initialized. Skipping label store preparation.');
   }
+  resolveLabelStoreReady();
 }
 
 /**
@@ -185,10 +183,15 @@ export async function issueLabelsForPost(
   console.log(`🏷️ Labeling post ${uri} with tokens: [${labelTokens.join(', ')}]`);
 
   // Publish labels if a server is available (it's only created outside dry-run mode)
-  if (labelerServer) {
+  const server = labelerServer;
+  if (server) {
     try {
+      // Don't write labels until the startup migration has finished: a label in the empty
+      // table (e.g. from a dashboard firehose toggle) would make the migration skip.
+      await labelStoreReady;
+
       for (const token of labelTokens) {
-        const saved = await labelerServer.createLabel({
+        const saved = await server.createLabel({
           uri: uri,
           val: token,
           neg: false,

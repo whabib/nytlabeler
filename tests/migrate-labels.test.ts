@@ -102,7 +102,7 @@ describe('migrateLegacyLabels (Postgres)', { skip: !testDatabaseUrl && 'TEST_DAT
 
   test('rolls back the whole copy if a signature does not match', async () => {
     const table = `${schema}.labels_tampered`;
-    await newServer(table);
+    const server = await newServer(table);
     // A row whose stored value differs from what was signed
     await insertLegacy('tampered', 1, 'good', '2026-06-13T00:00:00.000Z');
     await insertLegacy('tampered', 2, 'changed', '2026-06-13T00:00:01.000Z', 'original');
@@ -112,6 +112,10 @@ describe('migrateLegacyLabels (Postgres)', { skip: !testDatabaseUrl && 'TEST_DAT
       /does not match its signature/,
     );
     assert.strictEqual((await pool.query(`SELECT COUNT(*)::int AS n FROM ${table}`)).rows[0].n, 0);
+
+    // The id sequence wasn't advanced either (setval isn't undone by a rollback)
+    const first = await server.createLabel({ uri: 'did:plc:fresh', val: 'first' });
+    assert.strictEqual(first.id, 1);
   });
 
   test('skips when there is no legacy table', async () => {

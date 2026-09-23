@@ -68,14 +68,6 @@ export async function migrateLegacyLabels(
     );
     const migrated = inserted.rowCount ?? 0;
 
-    if (migrated > 0) {
-      // New labels continue after the highest migrated id
-      await client.query(
-        `SELECT setval(pg_get_serial_sequence($1, 'id'), (SELECT MAX(id) FROM ${targetTable}))`,
-        [targetTable],
-      );
-    }
-
     const sample = await client.query(
       `SELECT id, src, uri, cid, val, neg, cts, exp, sig FROM ${targetTable} ORDER BY random() LIMIT $1`,
       [sampleSize],
@@ -98,6 +90,15 @@ export async function migrateLegacyLabels(
           `Migrated label ${row.id} does not match its signature; rolled back the label migration`,
         );
       }
+    }
+
+    // Only after the signatures check out: setval is not undone by ROLLBACK
+    if (migrated > 0) {
+      // New labels continue after the highest migrated id
+      await client.query(
+        `SELECT setval(pg_get_serial_sequence($1, 'id'), (SELECT MAX(id) FROM ${targetTable}))`,
+        [targetTable],
+      );
     }
 
     await client.query('COMMIT');
