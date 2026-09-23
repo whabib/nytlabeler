@@ -14,14 +14,14 @@
   },
   "dependencies": {
     "@atproto/api": "^0.13.11",
-    "labeler": "git+https://github.com/whabib/labeler.git#32230ea6e3d15cb30c8d16710714d5410bcd0633",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
+    "labeler": "git+https://github.com/whabib/labeler.git#620647d4f98b995f07a30faf6ff0b7b5c69a2e0e",
     "pg": "^8.12.0",
     "ws": "^8.17.1"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.14.9",
     "@types/pg": "^8.11.6",
     "@types/ws": "^8.5.10",
