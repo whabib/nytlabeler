@@ -15,6 +15,8 @@ export interface LeaderElectionOptions {
   retryMs?: number;
   onAcquire: () => void;
   onLose: () => void;
+  /** Runs after each successful heartbeat while leading. Errors are logged, not fatal. */
+  onLeaderTick?: () => Promise<void> | void;
 }
 
 /**
@@ -57,8 +59,17 @@ export class LeaderElection {
       if (this.isLeader) {
         // Heartbeat: fails if the connection (and with it the lock) is gone
         await this.client!.query('SELECT 1');
+        await this.runLeaderTick();
       } else {
-        if (!this.client) this.client = await this.openConnection();
+        if (!this.client) {
+          const client = await this.openConnection();
+          // stop() may have run while the connection was opening; don't keep it
+          if (!this.running) {
+            await client.end().catch(() => {});
+            return;
+          }
+          this.client = client;
+        }
         const result = await this.client.query(
           'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
           [this.options.lockKey],
@@ -77,6 +88,14 @@ export class LeaderElection {
         this.timer = setTimeout(() => void this.tick(), this.retryMs);
         this.timer.unref?.();
       }
+    }
+  }
+
+  private async runLeaderTick(): Promise<void> {
+    try {
+      await this.options.onLeaderTick?.();
+    } catch (err) {
+      console.error(`❌ [LEADER] Leader tick for ${this.options.lockKey} failed:`, err);
     }
   }
 

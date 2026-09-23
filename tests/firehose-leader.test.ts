@@ -8,11 +8,15 @@ import { LeaderElection, type LeaderClient } from '../src/firehose-leader.js';
 class FakeClient extends EventEmitter implements LeaderClient {
   ended = false;
   broken = false;
-  constructor(private readonly lockAvailable: () => boolean) {
+  queries: string[] = [];
+  constructor(private readonly lockAvailable: () => boolean, private readonly connectDelayMs = 0) {
     super();
   }
-  async connect() {}
+  async connect() {
+    if (this.connectDelayMs) await new Promise((resolve) => setTimeout(resolve, this.connectDelayMs));
+  }
   async query(text: string) {
+    this.queries.push(text);
     if (this.broken) throw new Error('connection lost');
     if (text.includes('pg_try_advisory_lock')) return { rows: [{ acquired: this.lockAvailable() }] };
     return { rows: [] };
@@ -146,6 +150,53 @@ describe('LeaderElection', () => {
     assert.strictEqual(election.isLeader, false);
     assert.strictEqual(lost, 1);
     assert.ok(clients.every((client) => client.ended));
+  });
+
+  test('does not keep a connection that finished opening after stop()', async () => {
+    const clients: FakeClient[] = [];
+    const election = new LeaderElection({
+      lockKey: 'test',
+      createClient: () => {
+        const client = new FakeClient(() => true, 50);
+        clients.push(client);
+        return client;
+      },
+      retryMs: 10,
+      onAcquire: () => {},
+      onLose: () => {},
+    });
+    election.start();
+    await wait(5); // The connection is still opening
+    await election.stop();
+    await wait(100);
+
+    assert.strictEqual(election.isLeader, false);
+    assert.strictEqual(clients.length, 1);
+    assert.strictEqual(clients[0].ended, true, 'The late connection must be closed');
+    assert.ok(
+      !clients[0].queries.some((q) => q.includes('pg_try_advisory_lock')),
+      'The lock must not be taken after stop()',
+    );
+  });
+
+  test('runs the leader tick on each heartbeat, and a failing tick keeps leadership', async () => {
+    let ticks = 0;
+    const election = new LeaderElection({
+      lockKey: 'test',
+      createClient: () => new FakeClient(() => true),
+      retryMs: 10,
+      onAcquire: () => {},
+      onLose: () => {},
+      onLeaderTick: () => {
+        ticks++;
+        if (ticks === 1) throw new Error('setting lookup failed');
+      },
+    });
+    election.start();
+    await wait(60);
+    assert.ok(ticks >= 2, `expected several ticks, got ${ticks}`);
+    assert.strictEqual(election.isLeader, true);
+    await election.stop();
   });
 });
 
