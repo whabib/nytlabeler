@@ -164,6 +164,7 @@ export async function issueLabelsForPost(
     authorDid,
     text: postText,
     labels: labelTokens,
+    // Distinct titles only: repeating an identical title (e.g. a recurring column name) adds nothing
     title: [...new Set(articles.map((article) => article.title).filter(Boolean))].join(' | ') || null,
     timestamp: new Date().toISOString(),
   };
