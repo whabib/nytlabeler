@@ -34,7 +34,7 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 
 // Dynamically import to ensure process.env is read correctly
 const { server, wss, labelerProxyWss } = await import('../src/server.js');
-const { setLabelerServer, setLocalMaxId } = await import('../src/labeler.js');
+const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 
 describe('WebSocket Protocol Proxy', () => {
@@ -336,159 +336,85 @@ describe('WebSocket Protocol Proxy', () => {
     await targetClosePromise;
   }));
 
-  test('should successfully invoke ensureDatabaseSequence when connecting with a cursor', cleanErrors(async () => {
-    // 1. Setup mock pool and spy server
-    const originalQuery = pool.query;
-    pool.query = (async () => ({ rows: [] })) as any;
-
-    let executeCalledCount = 0;
-    let createLabelCalledCount = 0;
-
-    const spyServer = {
-      createLabel: async (label: any) => {
-        createLabelCalledCount++;
-      },
-      db: {
-        execute: async (query: any) => {
-          if (query.sql.includes('MAX(id)')) {
-            executeCalledCount++;
-            return { rows: [{ id: 5 }] };
-          }
-          if (query.sql.includes('SELECT * FROM labels')) {
-            return {
-              rows: [
-                {
-                  id: 6,
-                  src: 'did:plc:mock',
-                  uri: query.args[0],
-                  val: 'dummy-sequence-pad',
-                  neg: 0,
-                  cts: new Date().toISOString(),
-                  exp: null,
-                  sig: new Uint8Array([1, 2, 3])
-                }
-              ]
-            };
-          }
-          return { rows: [] };
-        }
-      }
-    };
-
-    setLabelerServer(spyServer as any);
-    setLocalMaxId(0); // Ensure the cursor (6) is larger than localMaxId to trigger padding
-
-    // 2. Clear any existing connections on the mock target
+  test('should hold subscriptions until the label store is ready', cleanErrors(async () => {
     clearMockTargetConnections();
+    initLabelStoreGate();
 
-    // 3. Connect via WebSocket with a cursor parameter
-    const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+    try {
+      const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.strictEqual(mockTargetConnections.length, 0, 'Should not reach the LabelerServer while the gate is closed');
 
-    // 4. Wait for connection to open and proxy to target
-    await waitForConnection(clientWs);
-
-    const targetWs = mockTargetConnections[0];
-    assert.ok(targetWs);
-
-    // 5. Assert that ensureDatabaseSequence was called and executed padding
-    assert.ok(executeCalledCount > 0, 'Should have queried sqlite for MAX(id) during padding');
-    assert.ok(createLabelCalledCount > 0, 'Should have called createLabel to pad the sequence gaps');
-
-    // 6. Test that proxy is still functional and proxies messages
-    const targetMsgPromise = new Promise<string>((resolve, reject) => {
-      targetWs.once('error', reject);
-      targetWs.once('message', (data) => {
-        resolve(data.toString());
+      // Opening the gate lets the proxied connection through with its cursor intact
+      const targetConnected = new Promise<void>((resolve) => {
+        mockTargetWss.once('connection', (_ws, request) => {
+          assert.strictEqual(request.url, '/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+          resolve();
+        });
       });
-    });
-
-    clientWs.send('hello-cursor-test');
-    const receivedByTarget = await targetMsgPromise;
-    assert.strictEqual(receivedByTarget, 'hello-cursor-test');
-
-    // 7. Cleanup connection
-    const targetClosePromise = new Promise<void>((resolve) => {
-      targetWs.once('close', () => {
-        resolve();
-      });
-    });
-
-    clientWs.close();
-    await targetClosePromise;
-
-    // 8. Restore original helpers & mock server
-    pool.query = originalQuery;
-    setLocalMaxId(0);
-    setLabelerServer({ mock: true });
+      setLabelerServer(null);
+      await prepareLabelStore();
+      await targetConnected;
+      clientWs.close();
+    } finally {
+      setLabelerServer({ mock: true });
+    }
   }));
 
-  test('should ignore invalid cursor parameter and proxy successfully', cleanErrors(async () => {
-    // 1. Setup mock pool and spy server
-    const originalQuery = pool.query;
-    pool.query = (async () => ({ rows: [] })) as any;
+  test('should not proxy a subscriber that disconnected while waiting for the label store', cleanErrors(async () => {
+    clearMockTargetConnections();
+    initLabelStoreGate();
 
-    let executeCalledCount = 0;
-    let createLabelCalledCount = 0;
+    try {
+      const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=6');
+      await new Promise<void>((resolve, reject) => {
+        clientWs.once('open', () => resolve());
+        clientWs.once('error', reject);
+      });
+      clientWs.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const spyServer = {
-      createLabel: async (label: any) => {
-        createLabelCalledCount++;
-      },
-      db: {
-        execute: async (query: any) => {
-          if (query.sql.includes('MAX(id)')) {
-            executeCalledCount++;
-            return { rows: [{ id: 5 }] };
-          }
-          return { rows: [] };
-        }
-      }
-    };
+      setLabelerServer(null);
+      await prepareLabelStore();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.strictEqual(mockTargetConnections.length, 0, 'No LabelerServer connection should be opened for a closed client');
+    } finally {
+      setLabelerServer({ mock: true });
+    }
+  }));
 
-    setLabelerServer(spyServer as any);
-    setLocalMaxId(0);
+  test('should hold XRPC HTTP requests until the label store is ready', cleanErrors(async () => {
+    initLabelStoreGate();
+    try {
+      let settled = false;
+      const response = fetch('http://127.0.0.1:14100/xrpc/com.atproto.label.queryLabels').finally(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.strictEqual(settled, false, 'Request should wait while the gate is closed');
 
-    // 2. Clear any existing connections on the mock target
+      setLabelerServer(null);
+      await prepareLabelStore();
+      setLabelerServer({ mock: true });
+      // Proxied to the mock target once the gate opens (any HTTP status means it got through)
+      const res = await response;
+      assert.ok(res.status > 0);
+      await res.body?.cancel();
+    } finally {
+      setLabelerServer({ mock: true });
+    }
+  }));
+
+  test('should proxy subscriptions with any cursor parameter unchanged', cleanErrors(async () => {
     clearMockTargetConnections();
 
-    // 3. Connect via WebSocket with an invalid cursor parameter
+    const targetConnected = new Promise<string | undefined>((resolve) => {
+      mockTargetWss.once('connection', (_ws, request) => resolve(request.url));
+    });
     const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=invalid123');
-
-    // 4. Wait for connection to open and proxy to target
     await waitForConnection(clientWs);
 
-    const targetWs = mockTargetConnections[0];
-    assert.ok(targetWs);
-
-    // 5. Assert that ensureDatabaseSequence was NOT called
-    assert.strictEqual(executeCalledCount, 0, 'Should NOT have queried sqlite for MAX(id) for invalid cursor');
-    assert.strictEqual(createLabelCalledCount, 0, 'Should NOT have padded sequence for invalid cursor');
-
-    // 6. Test that proxy is functional
-    const targetMsgPromise = new Promise<string>((resolve, reject) => {
-      targetWs.once('error', reject);
-      targetWs.once('message', (data) => {
-        resolve(data.toString());
-      });
-    });
-
-    clientWs.send('hello-invalid-cursor');
-    const receivedByTarget = await targetMsgPromise;
-    assert.strictEqual(receivedByTarget, 'hello-invalid-cursor');
-
-    // 7. Cleanup connection
-    const targetClosePromise = new Promise<void>((resolve) => {
-      targetWs.once('close', () => {
-        resolve();
-      });
-    });
-
+    assert.strictEqual(await targetConnected, '/xrpc/com.atproto.label.subscribeLabels?cursor=invalid123');
     clientWs.close();
-    await targetClosePromise;
-
-    // 8. Restore original helpers & mock server
-    pool.query = originalQuery;
-    setLocalMaxId(0);
-    setLabelerServer({ mock: true });
   }));
 });
