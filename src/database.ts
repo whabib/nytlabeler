@@ -85,7 +85,8 @@ export async function lookupArticle(url: string): Promise<ArticleMatch | null> {
       authors: Array.from(new Set(authors)), // Deduplicate
     };
   } catch (error) {
-    console.error(`Database error during URL lookup [${normalized}]:`, error);
+    // Pass the URL as an argument, not in the format string (it comes from a post)
+    console.error('Database error during URL lookup [%s]:', normalized, error);
     return null;
   }
 }

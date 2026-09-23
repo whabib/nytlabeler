@@ -235,7 +235,8 @@ function connect() {
         const authorDid = dataObj.did;
         const postText = record.text || '';
 
-        console.log(`🔍 [NYT LINK] Detected NY Times URL(s) in post ${postUri}: ${nytUrls.join(', ')}`);
+        // Post-derived values go in as arguments, never in the format string
+        console.log('🔍 [NYT LINK] Detected NY Times URL(s) in post %s: %s', postUri, nytUrls.join(', '));
 
         // Look up each distinct article once; links often differ only by tracking parameters
         const articles = new Map<number, ArticleMatch>();
@@ -243,10 +244,13 @@ function connect() {
           try {
             const article = await lookupArticle(url);
             if (article) {
-              console.log(`🎯 [DB MATCH] Found article in nytdata: "${article.title}" [Section: ${article.section}, Subsection: ${article.subsection || 'None'}, Authors: ${article.authors.join(', ')}]`);
+              console.log(
+                '🎯 [DB MATCH] Found article in nytdata: "%s" [Section: %s, Subsection: %s, Authors: %s]',
+                article.title, article.section, article.subsection || 'None', article.authors.join(', '),
+              );
               articles.set(article.id, article);
             } else {
-              console.log(`🫙 [NO DB MATCH] URL not found in database: ${url}`);
+              console.log('🫙 [NO DB MATCH] URL not found in database: %s', url);
             }
           } catch (err) {
             console.error('❌ Error processing link %s for post %s:', url, postUri, err);
@@ -255,7 +259,7 @@ function connect() {
 
         // Leadership may have changed during the lookups; the new leader handles new posts
         if (generation !== leaderGeneration || !getLeadership().isLeader) {
-          console.log(`⏸️ Dropping post ${postUri}: firehose leadership changed while processing it.`);
+          console.log('⏸️ Dropping post %s: firehose leadership changed while processing it.', postUri);
           return;
         }
         if (articles.size === 0) return;

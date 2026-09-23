@@ -178,7 +178,7 @@ export async function issueLabelsForPost(
     global.broadcastLog(logEntry);
   }
 
-  console.log(`🏷️ Labeling post ${uri} with tokens: [${labelTokens.join(', ')}]`);
+  console.log('🏷️ Labeling post %s with tokens: [%s]', uri, labelTokens.join(', '));
 
   // Publish labels if a server is available (it's only created outside dry-run mode)
   const server = labelerServer;
@@ -194,12 +194,12 @@ export async function issueLabelsForPost(
           neg: false,
         });
       }
-      console.log(`✅ Successfully published labels for: ${uri}`);
+      console.log('✅ Successfully published labels for: %s', uri);
     } catch (error) {
       console.error('❌ Failed to publish labels for %s:', uri, error);
     }
   } else {
-    console.log(`[DRY RUN] Would publish labels: ${JSON.stringify(labelTokens)} for URI: ${uri}`);
+    console.log('[DRY RUN] Would publish labels: %s for URI: %s', JSON.stringify(labelTokens), uri);
   }
 }
 

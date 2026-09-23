@@ -247,24 +247,23 @@ document.addEventListener('DOMContentLoaded', () => {
           cls += ' author';
         }
         const displayText = l === 'us' ? 'US' : l;
-        return `<span class="${cls}">${displayText}</span>`;
+        return `<span class="${cls}">${escapeHtml(displayText)}</span>`;
       }).join(' ');
 
       // Build safe external links
-      const articleUrl = `https://www.nytimes.com/search?query=${encodeURIComponent(entry.title || '')}`;
-      const postUrl = `https://bsky.app/profile/${entry.authorDid}/post/${entry.uri.split('/').pop()}`;
+      const postUrl = `https://bsky.app/profile/${encodeURIComponent(entry.authorDid)}/post/${encodeURIComponent(entry.uri.split('/').pop())}`;
 
       return `
         <tr>
-          <td class="history-time">${time}</td>
+          <td class="history-time">${escapeHtml(time)}</td>
           <td>
-            <div class="article-title-cell">${entry.title || 'Unknown Title'}</div>
+            <div class="article-title-cell">${escapeHtml(entry.title || 'Unknown Title')}</div>
           </td>
           <td class="post-text-cell">${escapeHtml(entry.text)}</td>
           <td><div class="emitted-tags-cell">${tags}</div></td>
           <td>
             <div style="display: flex; gap: 8px;">
-              <a href="${postUrl}" target="_blank" rel="noopener noreferrer" class="action-btn">Post 🦋</a>
+              <a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn">Post 🦋</a>
             </div>
           </td>
         </tr>
@@ -272,9 +271,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('');
   }
 
-  // HTML escape helper to prevent XSS in post rendering
-  function escapeHtml(str) {
-    return str
+  // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML
+  function escapeHtml(value) {
+    return String(value ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -292,10 +291,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (authorsListEl) {
         authorsListEl.innerHTML = authors.map(auth => `
           <div class="author-badge">
-            <span class="author-title">${auth.name}</span>
+            <span class="author-title">${escapeHtml(auth.name)}</span>
             <div class="author-meta">
-              <span class="author-token">${slugify(auth.name)}</span>
-              <span>${auth.total_articles} articles</span>
+              <span class="author-token">${escapeHtml(slugify(auth.name))}</span>
+              <span>${escapeHtml(auth.total_articles)} articles</span>
             </div>
           </div>
         `).join('');
@@ -308,14 +307,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (sectionsCountBadge) sectionsCountBadge.textContent = cats.sections.length;
       if (sectionsListEl) {
         sectionsListEl.innerHTML = cats.sections.map(sec => `
-          <span class="tag-label">${sec}</span>
+          <span class="tag-label">${escapeHtml(sec)}</span>
         `).join('');
       }
 
       if (subsectionsCountBadge) subsectionsCountBadge.textContent = cats.subsections.length;
       if (subsectionsListEl) {
         subsectionsListEl.innerHTML = cats.subsections.map(sub => `
-          <span class="tag-label">${sub}</span>
+          <span class="tag-label">${escapeHtml(sub)}</span>
         `).join('');
       }
     } catch (err) {
@@ -387,7 +386,12 @@ document.addEventListener('DOMContentLoaded', () => {
       
       else if (data.type === 'heartbeat') {
         updateStats(data.stats);
-        if (throughputEl) throughputEl.innerHTML = `${data.stats.throughput} <span class="unit">/s</span>`;
+        if (throughputEl) {
+          const unit = document.createElement('span');
+          unit.className = 'unit';
+          unit.textContent = '/s';
+          throughputEl.replaceChildren(`${Number(data.stats.throughput) || 0} `, unit);
+        }
         if (uptimeEl) uptimeEl.textContent = formatUptime(data.stats.uptime);
 
         // Update speed history and draw chart
