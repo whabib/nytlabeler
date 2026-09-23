@@ -1,6 +1,8 @@
+import pg from 'pg';
 import WebSocket from 'ws';
-import { FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
+import { DATABASE_URL, ENV, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
 import { lookupArticle } from './database.js';
+import { LeaderElection, type LeaderClient } from './firehose-leader.js';
 import { issueLabelsForPost, stats } from './labeler.js';
 
 export let socket: WebSocket | null = null;
@@ -89,12 +91,62 @@ function resetWatchdog() {
   }, 15000);
 }
 
+// Only one instance runs the firehose at a time. While an old and a new deployment
+// overlap (which can last up to the request timeout), the others wait on standby instead
+// of labeling every post a second time.
+let leadership: LeaderElection | null = null;
+let createLeaderClient: () => LeaderClient = () =>
+  new pg.Client({ connectionString: DATABASE_URL, keepAlive: true });
+let leaderRetryMs = 10_000;
+
+function getLeadership(): LeaderElection {
+  leadership ??= new LeaderElection({
+    lockKey: `nytlabeler:firehose:${ENV}`,
+    createClient: createLeaderClient,
+    retryMs: leaderRetryMs,
+    onAcquire: () => {
+      stats.firehoseLeader = true;
+      if (stats.firehoseEnabled && (!socket || socket.readyState === WebSocket.CLOSED)) {
+        reconnectDelay = 1000;
+        connect();
+      }
+    },
+    onLose: () => {
+      stats.firehoseLeader = false;
+      closeSocket();
+    },
+  });
+  return leadership;
+}
+
+/**
+ * Overrides how the leadership connection is made and how often it retries, discarding
+ * any current election. Useful for unit testing.
+ */
+export async function configureFirehoseLeadership(options: { createClient: () => LeaderClient; retryMs: number }) {
+  await leadership?.stop();
+  leadership = null;
+  createLeaderClient = options.createClient;
+  leaderRetryMs = options.retryMs;
+}
+
+/**
+ * Stops competing for firehose leadership, releasing it if held.
+ */
+export async function releaseFirehoseLeadership() {
+  await leadership?.stop();
+}
+
 /**
  * Connects to the Jetstream firehose endpoint and subscribes to commits.
  */
 function connect() {
   if (!stats.firehoseEnabled) {
     console.log('🔌 Skipped connection because Jetstream listener is disabled.');
+    return;
+  }
+  if (!getLeadership().isLeader) {
+    console.log('⏸️ Skipped connection because another instance is running the firehose (standby).');
     return;
   }
 
@@ -192,8 +244,8 @@ function handleDisconnect() {
     watchdogTimeout = null;
   }
 
-  if (!stats.firehoseEnabled) {
-    console.log('🔌 Jetstream listener disabled. Skipping reconnection.');
+  if (!stats.firehoseEnabled || !getLeadership().isLeader) {
+    console.log('🔌 Jetstream listener disabled or on standby. Skipping reconnection.');
     return;
   }
 
@@ -212,20 +264,32 @@ function handleDisconnect() {
 
 /**
  * Starts the Jetstream listener subscribing to the live Bluesky firehose.
+ * The connection opens once this instance holds firehose leadership.
  */
 export function startFirehoseListener() {
   stats.firehoseEnabled = true;
   reconnectDelay = 1000;
-  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+  const election = getLeadership();
+  election.start();
+  if (election.isLeader && (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING)) {
     connect();
   }
 }
 
 /**
  * Stops the Jetstream listener and closes any active connections.
+ * Leadership is kept, so no other instance starts labeling in its place.
  */
 export function stopFirehoseListener() {
   stats.firehoseEnabled = false;
+  closeSocket();
+  console.log('🛑 Jetstream listener successfully stopped!');
+}
+
+/**
+ * Closes the Jetstream connection without triggering a reconnect.
+ */
+function closeSocket() {
   stats.firehoseConnected = false;
 
   if (watchdogTimeout) {
@@ -245,6 +309,4 @@ export function stopFirehoseListener() {
     }
     socket = null;
   }
-
-  console.log('🛑 Jetstream listener successfully stopped!');
 }

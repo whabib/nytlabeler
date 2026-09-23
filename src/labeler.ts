@@ -27,6 +27,8 @@ export const stats = {
   reconnectCount: 0,
   activeEndpoint: '',
   firehoseEnabled: true,
+  /** Whether this instance holds firehose leadership (only the leader connects). */
+  firehoseLeader: false,
 };
 
 // Set of active opinion author slugs to filter which author labels we publish
