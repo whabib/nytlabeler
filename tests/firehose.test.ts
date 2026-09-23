@@ -41,6 +41,7 @@ describe('Firehose leadership', () => {
   // Test-controlled database state
   let savedSetting: string | null = 'true';
   let lookupDelayMs = 0;
+  let lookups = 0;
   let lockFree = false;
   let clients: FakeClient[] = [];
   const created: string[] = [];
@@ -59,6 +60,7 @@ describe('Firehose leadership', () => {
     pool.query = (async (sql: string) => {
       if (sql.includes('"_Settings"')) return { rows: savedSetting === null ? [] : [{ value: savedSetting }] };
       if (sql.includes('FROM "Article"')) {
+        lookups++;
         await wait(lookupDelayMs);
         return {
           rows: [{ id: 1, url: 'https://www.nytimes.com/x', section: 'us', subsection: null, title: 'T', author_name: null }],
@@ -78,6 +80,7 @@ describe('Firehose leadership', () => {
   beforeEach(async () => {
     savedSetting = 'true';
     lookupDelayMs = 0;
+    lookups = 0;
     lockFree = false;
     clients = [];
     created.length = 0;
@@ -111,7 +114,7 @@ describe('Firehose leadership', () => {
     clients[clients.length - 1].emit('end');
   }
 
-  function sendNytPost(ws: WebSocket, rkey: string) {
+  function sendNytPost(ws: WebSocket, rkey: string, text = 'Read this https://www.nytimes.com/2026/09/23/us/story.html') {
     ws.send(JSON.stringify({
       kind: 'commit',
       did: 'did:plc:poster',
@@ -119,7 +122,7 @@ describe('Firehose leadership', () => {
         collection: 'app.bsky.feed.post',
         operation: 'create',
         rkey,
-        record: { text: 'Read this https://www.nytimes.com/2026/09/23/us/story.html' },
+        record: { text },
       },
     }));
   }
@@ -185,6 +188,35 @@ describe('Firehose leadership', () => {
     savedSetting = 'false';
     await waitFor(() => open().length === 0 && !stats.firehoseConnected);
     assert.strictEqual(stats.firehoseEnabled, false);
+  });
+
+  test('labels a post once when it links the same article more than once', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+
+    // Two forms of the same URL: one lookup, one set of labels
+    sendNytPost(
+      open()[0],
+      'variants',
+      'https://www.nytimes.com/2026/09/23/us/story.html?smid=bs-share and https://nytimes.com/2026/09/23/us/story.html',
+    );
+    await waitFor(() => created.length > 0);
+    await wait(50);
+    assert.strictEqual(lookups, 1);
+    assert.deepStrictEqual(created, ['us']);
+
+    // Different URLs that resolve to the same article: still one set of labels
+    created.length = 0;
+    lookups = 0;
+    sendNytPost(
+      open()[0],
+      'aliases',
+      'https://www.nytimes.com/2026/09/23/us/story.html and https://www.nytimes.com/live/2026/09/23/us/story-updates',
+    );
+    await waitFor(() => lookups === 2 && created.length > 0);
+    await wait(50);
+    assert.deepStrictEqual(created, ['us']);
   });
 
   test('labels a post while leading, but drops it if leadership is lost while it is processed', async () => {

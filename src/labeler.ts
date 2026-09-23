@@ -104,34 +104,50 @@ export async function prepareLabelStore(): Promise<void> {
  * @param postText The text content of the post
  * @param metadata The article metadata parsed from the database
  */
+export interface ArticleMetadata {
+  section: string;
+  subsection: string | null;
+  authors: string[];
+  title: string | null;
+}
+
+/**
+ * Issues labels for a post linking one or more NYT articles. Each label value is issued at
+ * most once per post, even when several links point to the same or overlapping articles.
+ */
 export async function issueLabelsForPost(
   uri: string,
   authorDid: string,
   postText: string,
-  metadata: {
-    section: string;
-    subsection: string | null;
-    authors: string[];
-    title: string | null;
-  }
+  articles: ArticleMetadata[],
 ) {
   const labelTokens: string[] = [];
+  const addToken = (token: string) => {
+    if (token && !labelTokens.includes(token)) labelTokens.push(token);
+  };
 
-  // 1. Add section label (simplified, no prefix, lowercase kebab-case)
-  if (metadata.section) {
-    labelTokens.push(slugify(metadata.section));
+  // Strict order across all linked articles: sections, then subsections, then authors
+  // 1. Add section labels (simplified, no prefix, lowercase kebab-case)
+  for (const metadata of articles) {
+    if (metadata.section) {
+      addToken(slugify(metadata.section));
+    }
   }
 
-  // 2. Add subsection label (simplified, no prefix, lowercase kebab-case)
-  if (metadata.subsection && metadata.subsection.trim() !== '') {
-    labelTokens.push(slugify(metadata.subsection));
+  // 2. Add subsection labels (simplified, no prefix, lowercase kebab-case)
+  for (const metadata of articles) {
+    if (metadata.subsection && metadata.subsection.trim() !== '') {
+      addToken(slugify(metadata.subsection));
+    }
   }
 
   // 3. Add author labels if they are in the active/published author scope
-  for (const author of metadata.authors) {
-    const slug = slugify(author);
-    if (activeAuthorSlugsSet.has(slug)) {
-      labelTokens.push(slug);
+  for (const metadata of articles) {
+    for (const author of metadata.authors) {
+      const slug = slugify(author);
+      if (activeAuthorSlugsSet.has(slug)) {
+        addToken(slug);
+      }
     }
   }
 
@@ -148,7 +164,8 @@ export async function issueLabelsForPost(
     authorDid,
     text: postText,
     labels: labelTokens,
-    title: metadata.title,
+    // Distinct titles only: repeating an identical title (e.g. a recurring column name) adds nothing
+    title: [...new Set(articles.map((article) => article.title).filter(Boolean))].join(' | ') || null,
     timestamp: new Date().toISOString(),
   };
 
