@@ -154,7 +154,8 @@ DEPLOY_FLAGS=(
   "--concurrency" "1000"
   # Node runs the app on one thread; since the Postgres cutover, CPU peaks at ~6% of 2 vCPUs
   "--cpu" "1"
-  "--memory" "1Gi"
+  # Labels live in Postgres; the service settles at ~170-215 MB
+  "--memory" "512Mi"
   "--no-cpu-throttling"
 )
 

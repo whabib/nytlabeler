@@ -10,10 +10,9 @@
     "build": "tsc",
     "publish-definitions": "tsx src/publish-definitions.ts",
     "setup-labeler": "npx labeler setup",
-    "test": "tsx --test tests/database.test.ts tests/firehose-leader.test.ts tests/firehose.test.ts tests/jetstream.test.ts tests/labeler.test.ts tests/migrate-labels.test.ts tests/server.test.ts"
+    "test": "tsx --test tests/database.test.ts tests/firehose-leader.test.ts tests/firehose.test.ts tests/jetstream.test.ts tests/labeler.test.ts tests/server.test.ts"
   },
   "dependencies": {
-    "@atcute/cbor": "^1.0.7",
     "@atproto/api": "^0.13.11",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",

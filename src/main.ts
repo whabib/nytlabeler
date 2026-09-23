@@ -26,7 +26,7 @@ async function bootstrap() {
   // 3. Load and cache active authors from PostgreSQL database
   await loadActiveAuthors();
 
-  // 4. Create the Postgres label table and copy the legacy label history into it on first run
+  // 4. Wait for the Postgres label table to be ready, then let labeler requests through
   await prepareLabelStore();
 
   // 5. Connect to Jetstream and start processing firehose posts if enabled
