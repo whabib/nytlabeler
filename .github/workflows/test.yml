@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      # Disposable database for the label migration tests
+      # Disposable database for the Postgres tests (firehose leader election)
       postgres:
         image: postgres:18
         env:

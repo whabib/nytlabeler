@@ -3,7 +3,6 @@ import assert from 'node:assert';
 import { formatLabel, signLabel } from 'labeler';
 import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, setLabelerServer, initLabelStoreGate, prepareLabelStore, labelStoreReady, LABELS_TABLE } from '../src/labeler.js';
 import { pool } from '../src/database.js';
-import { parseSigningKey } from '../src/migrate-labels.js';
 
 const TEST_KEY = new Uint8Array(32).fill(7);
 
@@ -90,16 +89,15 @@ describe('Labeler Logic', () => {
     assert.strictEqual(recentLabels.length, 0);
   });
 
-  test('should publish each label and copy it to the legacy _Labels table', async () => {
+  test('should publish each label through the LabelerServer and nothing else', async () => {
     const originalQuery = pool.query;
-    const legacyWrites: any[][] = [];
-    pool.query = (async (sql: string, params?: any[]) => {
-      if (sql.includes('INSERT INTO "_Labels"')) legacyWrites.push(params ?? []);
+    const queries: string[] = [];
+    pool.query = (async (sql: string) => {
+      queries.push(sql);
       return { rows: [] };
     }) as any;
 
     const created: any[] = [];
-    let nextId = 100;
     setLabelerServer({
       createLabel: async (label: any) => {
         created.push(label);
@@ -107,7 +105,7 @@ describe('Labeler Logic', () => {
           { src: 'did:plc:labeler', uri: label.uri, val: label.val, neg: false, cts: '2026-09-23T01:02:03.456Z' },
           TEST_KEY,
         );
-        return { id: nextId++, ...formatLabel(signed) };
+        return { id: created.length, ...formatLabel(signed) };
       },
     });
 
@@ -123,38 +121,15 @@ describe('Labeler Logic', () => {
       setLabelerServer(null);
     }
 
-    assert.deepStrictEqual(created.map((label) => label.val), ['travel', 'europe']);
-    assert.strictEqual(legacyWrites.length, 2);
-    // Columns: environment, id, src, uri, cid, val, neg, cts, exp, sig
-    const [, id, src, uri, cid, val, neg, cts, exp, sig] = legacyWrites[0];
-    assert.strictEqual(id, 100);
-    assert.strictEqual(src, 'did:plc:labeler');
-    assert.strictEqual(uri, 'at://did:plc:mock/app.bsky.feed.post/publish');
-    assert.strictEqual(cid, null);
-    assert.strictEqual(val, 'travel');
-    assert.strictEqual(neg, false);
-    assert.strictEqual(cts, '2026-09-23T01:02:03.456Z');
-    assert.strictEqual(exp, null);
-    assert.ok(Buffer.isBuffer(sig));
-    assert.strictEqual(sig.byteLength, 64);
-    assert.strictEqual(legacyWrites[1][1], 101);
-  });
-
-  test('should hold the label store gate until preparation finishes', async () => {
-    initLabelStoreGate();
-    let opened = false;
-    const waiting = labelStoreReady.then(() => {
-      opened = true;
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.strictEqual(opened, false, 'Gate should stay closed until prepareLabelStore runs');
-
-    // With no LabelerServer there is nothing to migrate, but the gate must still open
-    setLabelerServer(null);
-    await prepareLabelStore();
-    await waiting;
-    assert.strictEqual(opened, true);
+    assert.deepStrictEqual(
+      created.map((label) => [label.uri, label.val, label.neg]),
+      [
+        ['at://did:plc:mock/app.bsky.feed.post/publish', 'travel', false],
+        ['at://did:plc:mock/app.bsky.feed.post/publish', 'europe', false],
+      ],
+    );
+    // The legacy "_Labels" table is gone; labels are stored only by the LabelerServer
+    assert.deepStrictEqual(queries.filter((sql) => sql.includes('_Labels')), []);
   });
 
   test('should not publish labels until the label store gate opens', async () => {
@@ -183,7 +158,7 @@ describe('Labeler Logic', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       assert.deepStrictEqual(created, [], 'Nothing should be written while the migration runs');
 
-      // Open the gate (with no server, preparation has nothing to migrate); the post that
+      // Open the gate (with no server, there is nothing to prepare); the post that
       // arrived earlier is then published through the server it started with
       setLabelerServer(null);
       await prepareLabelStore();
@@ -220,15 +195,6 @@ describe('Labeler Logic', () => {
 
   test('should use one Postgres label table per environment', () => {
     assert.match(LABELS_TABLE, /^labeler\.labels_[a-z0-9_]+$/);
-  });
-
-  test('parseSigningKey should accept 32-byte hex and base64url keys and reject others', () => {
-    const hex = 'ab'.repeat(32);
-    assert.deepStrictEqual(parseSigningKey(hex), new Uint8Array(32).fill(0xab));
-    const base64url = Buffer.from(new Uint8Array(32).fill(0xfb)).toString('base64url');
-    assert.deepStrictEqual(parseSigningKey(base64url), new Uint8Array(32).fill(0xfb));
-    assert.throws(() => parseSigningKey('ab'.repeat(31)), /Invalid signing key/);
-    assert.throws(() => parseSigningKey('not a key'), /Invalid signing key/);
   });
 
   after(async () => {

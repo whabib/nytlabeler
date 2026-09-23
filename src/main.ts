@@ -6,8 +6,8 @@ if (typeof global.WebSocket === 'undefined') {
 }
 
 import { validateConfig } from './config.js';
-import { loadActiveAuthors, stats, prepareLabelStore, initLabelStoreGate } from './labeler.js';
-import { startFirehoseListener } from './jetstream.js';
+import { loadActiveAuthors, prepareLabelStore, initLabelStoreGate } from './labeler.js';
+import { initFirehose } from './jetstream.js';
 import { startWebServer } from './server.js';
 import { loadSetting } from './database.js';
 
@@ -26,16 +26,14 @@ async function bootstrap() {
   // 3. Load and cache active authors from PostgreSQL database
   await loadActiveAuthors();
 
-  // 4. Create the Postgres label table and copy the legacy label history into it on first run
+  // 4. Wait for the Postgres label table to be ready, then let labeler requests through
   await prepareLabelStore();
 
-  // 5. Connect to Jetstream and start processing firehose posts if enabled
+  // 5. Compete for firehose leadership; the leader connects to Jetstream if the firehose is enabled
   const firehoseEnabledSetting = await loadSetting('firehose_enabled', 'true');
-  if (firehoseEnabledSetting === 'true') {
-    startFirehoseListener();
-  } else {
-    stats.firehoseEnabled = false;
-    console.log('🔌 Skipped starting Jetstream firehose listener because it was persistently toggled OFF.');
+  initFirehose(firehoseEnabledSetting === 'true');
+  if (firehoseEnabledSetting !== 'true') {
+    console.log('🔌 Jetstream firehose is persistently toggled OFF; waiting for it to be enabled.');
   }
 
   console.log('✅ NY Times Bluesky Labeler Service fully bootstrapped and active!');

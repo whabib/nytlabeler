@@ -1,8 +1,6 @@
-import { fromBytes } from '@atcute/cbor';
 import { LabelerServer } from 'labeler';
 import { DID, SIGNING_KEY, DRY_RUN, ENV } from './config.js';
-import { pool, getActiveAuthors, slugify, syncLabelToPostgres } from './database.js';
-import { migrateLegacyLabels, parseSigningKey } from './migrate-labels.js';
+import { pool, getActiveAuthors, slugify } from './database.js';
 
 // Define matching types
 export interface IssuedLabelLog {
@@ -27,6 +25,8 @@ export const stats = {
   reconnectCount: 0,
   activeEndpoint: '',
   firehoseEnabled: true,
+  /** Whether this instance holds firehose leadership (only the leader connects). */
+  firehoseLeader: false,
 };
 
 // Set of active opinion author slugs to filter which author labels we publish
@@ -70,8 +70,7 @@ if (!DRY_RUN && DID && SIGNING_KEY) {
   console.log('ℹ️ Running in Dry Run / Mock Labeler mode. No label server initialized.');
 }
 
-// Gate that holds labeler requests until the label table is ready (and migrated) on startup,
-// so subscribers don't see an empty table and get a FutureCursor error.
+// Gate that holds labeler requests until the label table is ready on startup.
 let resolveLabelStoreReady: () => void = () => {};
 export let labelStoreReady = Promise.resolve();
 
@@ -85,30 +84,13 @@ export function initLabelStoreGate(): void {
 }
 
 /**
- * Waits for the label table to exist, copies the legacy "_Labels" history into it on first
- * run, then opens the startup gate. Throws if the migration fails its signature check; the
- * gate then stays closed (the process exits).
+ * Waits for the LabelerServer to create its label table, then opens the startup gate.
+ * Throws if the table can't be created; the gate then stays closed (the process exits).
  */
 export async function prepareLabelStore(): Promise<void> {
   if (labelerServer) {
     await labelerServer.ready();
-
-    console.log(`🔋 [MIGRATE] Checking whether ${LABELS_TABLE} needs the legacy label history...`);
-    const result = await migrateLegacyLabels(pool, {
-      targetTable: LABELS_TABLE,
-      environment: ENV,
-      signingKey: parseSigningKey(SIGNING_KEY),
-    });
-    if (result.skipped === 'target-not-empty') {
-      console.log(`🔋 [MIGRATE] ${LABELS_TABLE} already has labels; nothing to migrate.`);
-    } else if (result.skipped === 'no-legacy-table') {
-      console.log('🔋 [MIGRATE] No legacy "_Labels" table found; starting with an empty label table.');
-    } else {
-      console.log(
-        `✅ [MIGRATE] Copied ${result.migrated} labels from "_Labels" into ${LABELS_TABLE} ` +
-          `(${result.checkedSignatures} signatures re-checked).`,
-      );
-    }
+    console.log(`✅ Label table ${LABELS_TABLE} is ready.`);
   } else {
     console.log('ℹ️ No LabelerServer initialized. Skipping label store preparation.');
   }
@@ -186,31 +168,15 @@ export async function issueLabelsForPost(
   const server = labelerServer;
   if (server) {
     try {
-      // Don't write labels until the startup migration has finished: a label in the empty
-      // table (e.g. from a dashboard firehose toggle) would make the migration skip.
+      // Don't write labels until the label table is ready
       await labelStoreReady;
 
       for (const token of labelTokens) {
-        const saved = await server.createLabel({
+        await server.createLabel({
           uri: uri,
           val: token,
           neg: false,
         });
-
-        // Keep the legacy "_Labels" table in sync for one release, so rolling back to the
-        // previous (SQLite) version doesn't lose labels.
-        await syncLabelToPostgres({
-          id: saved.id,
-          src: saved.src,
-          uri: saved.uri,
-          cid: saved.cid ?? null,
-          val: saved.val,
-          neg: Boolean(saved.neg),
-          cts: saved.cts,
-          exp: saved.exp ?? null,
-          sig: Buffer.from(fromBytes(saved.sig)),
-        });
-        console.log(`🔋 [LEGACY SYNC] Copied label ${saved.id} to "_Labels" for token: ${token}`);
       }
       console.log(`✅ Successfully published labels for: ${uri}`);
     } catch (error) {
