@@ -152,7 +152,8 @@ DEPLOY_FLAGS=(
   # subscribeLabels clients to reconnect and replay; 3600s is the maximum
   "--timeout" "3600"
   "--concurrency" "1000"
-  "--cpu" "2"
+  # Node runs the app on one thread; since the Postgres cutover, CPU peaks at ~6% of 2 vCPUs
+  "--cpu" "1"
   "--memory" "1Gi"
   "--no-cpu-throttling"
 )
