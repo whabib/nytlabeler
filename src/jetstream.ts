@@ -1,7 +1,7 @@
 import pg from 'pg';
 import WebSocket from 'ws';
 import { DATABASE_URL, ENV, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
-import { loadSetting, lookupArticle } from './database.js';
+import { loadSetting, lookupArticle, normalizeNytUrl, type ArticleMatch } from './database.js';
 import { LeaderElection, type LeaderClient } from './firehose-leader.js';
 import { issueLabelsForPost, stats } from './labeler.js';
 
@@ -237,29 +237,34 @@ function connect() {
 
         console.log(`🔍 [NYT LINK] Detected NY Times URL(s) in post ${postUri}: ${nytUrls.join(', ')}`);
 
-        for (const url of nytUrls) {
+        // Look up each distinct article once; links often differ only by tracking parameters
+        const articles = new Map<number, ArticleMatch>();
+        for (const url of new Set(nytUrls.map(normalizeNytUrl))) {
           try {
             const article = await lookupArticle(url);
-            // Leadership may have changed during the lookup; the new leader handles new posts
-            if (generation !== leaderGeneration || !getLeadership().isLeader) {
-              console.log(`⏸️ Dropping post ${postUri}: firehose leadership changed while processing it.`);
-              return;
-            }
             if (article) {
               console.log(`🎯 [DB MATCH] Found article in nytdata: "${article.title}" [Section: ${article.section}, Subsection: ${article.subsection || 'None'}, Authors: ${article.authors.join(', ')}]`);
-              
-              await issueLabelsForPost(postUri, authorDid, postText, {
-                section: article.section,
-                subsection: article.subsection,
-                authors: article.authors,
-                title: article.title,
-              });
+              articles.set(article.id, article);
             } else {
               console.log(`🫙 [NO DB MATCH] URL not found in database: ${url}`);
             }
           } catch (err) {
             console.error('❌ Error processing link %s for post %s:', url, postUri, err);
           }
+        }
+
+        // Leadership may have changed during the lookups; the new leader handles new posts
+        if (generation !== leaderGeneration || !getLeadership().isLeader) {
+          console.log(`⏸️ Dropping post ${postUri}: firehose leadership changed while processing it.`);
+          return;
+        }
+        if (articles.size === 0) return;
+
+        // One call per post, so each label value is issued at most once
+        try {
+          await issueLabelsForPost(postUri, authorDid, postText, [...articles.values()]);
+        } catch (err) {
+          console.error('❌ Error labeling post %s:', postUri, err);
         }
       }
     }
