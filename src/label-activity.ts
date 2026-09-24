@@ -25,8 +25,11 @@ export interface StoredPostLabels {
 export const LAST_HOUR_SCAN_LIMIT = 5000;
 
 // The all-time total is counted once, then kept up to date by counting only labels newer
-// than the last id seen. Labels are never deleted, and ids are committed in order (the
-// labeler holds a lock while inserting), so the running total stays exact.
+// than the last id seen. That stays exact because labels are never deleted, and ids become
+// visible strictly in order: the labeler library's PostgresLabelStore.insert takes a
+// per-table advisory lock (pg_advisory_xact_lock) before the INSERT draws its id and holds
+// it until COMMIT, so no insert can draw an id until the previous one has committed, across
+// all instances. (This is the labels-table lock, not the firehose leadership lock.)
 let countedTotal = 0;
 let countedThroughId = 0;
 let refreshInFlight: Promise<LabelActivity> | null = null;

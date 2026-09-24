@@ -1,6 +1,7 @@
 import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import pg from 'pg';
+import { LabelerServer } from 'labeler';
 import { pool } from '../src/database.js';
 import { LABELS_TABLE } from '../src/labeler.js';
 import { fetchLabelActivity, fetchRecentPostLabels, resetLabelActivityCount, LAST_HOUR_SCAN_LIMIT } from '../src/label-activity.js';
@@ -158,5 +159,41 @@ describe('Label activity (Postgres)', { skip: !testDatabaseUrl && 'TEST_DATABASE
       { uri: 'at://b', labels: ['world'], timestamp: '2026-09-24T01:50:00.000Z' },
       { uri: 'at://a', labels: ['us', 'politics'], timestamp: '2026-09-24T01:10:00.010Z' },
     ]);
+  });
+
+  test('keeps the running total exact while several servers insert concurrently', async () => {
+    resetLabelActivityCount();
+    await fetchLabelActivity(); // Start the running count
+
+    // Two servers sharing the table, each with several concurrent writers, like overlapping
+    // instances whose firehose handlers label posts in parallel
+    const key = Buffer.from(new Uint8Array(32).fill(7)).toString('hex');
+    const servers = [0, 1].map(() => new LabelerServer({
+      did: 'did:plc:ragtjsm2j2vknq6zbnujgah7',
+      signingKey: key,
+      postgres: { pool: testPool, table: `${schema}.labels` },
+    }));
+    let writing = true;
+    const writers = servers.flatMap((server, s) => [0, 1, 2].map(async (w) => {
+      for (let i = 0; i < 40; i++) {
+        await server.createLabel({ uri: `did:plc:concurrent${s}${w}${i}`, val: 'concurrent' });
+      }
+    }));
+    // Refresh the running total continuously while the writes land
+    const poller = (async () => {
+      while (writing) {
+        await fetchLabelActivity();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    })();
+    await Promise.all(writers);
+    writing = false;
+    await poller;
+
+    const running = (await fetchLabelActivity()).total;
+    const actual = (await testPool.query(`SELECT COUNT(*)::int AS n FROM ${table}`)).rows[0].n;
+    assert.strictEqual(actual, 6 + 240);
+    assert.strictEqual(running, actual, 'The incremental count must not skip any label');
+    for (const server of servers) await new Promise<void>((resolve) => server.close(resolve));
   });
 });
