@@ -7,6 +7,7 @@ import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } f
 import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
+import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -321,6 +322,22 @@ app.get('/api/history', (req, res) => {
   res.json(recentLabels);
 });
 
+// Recent labels from the database, so a standby instance can show what the leader issued
+app.get('/api/labels/recent', async (req, res) => {
+  // No label table without a LabelerServer (e.g. dry-run mode); the dashboard uses its own log
+  if (!labelerServer) {
+    res.json([]);
+    return;
+  }
+  try {
+    // The label table exists once the startup gate opens
+    await labelStoreReady;
+    res.json(await fetchRecentPostLabels());
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch recent labels' });
+  }
+});
+
 app.get('/api/authors', async (req, res) => {
   try {
     const authors = await getActiveAuthors();
@@ -351,7 +368,27 @@ app.get('/{*splat}', (req, res) => {
 /**
  * Starts the dashboard web server.
  */
+const LABEL_ACTIVITY_REFRESH_MS = 30_000;
+
+/**
+ * Refreshes the database-backed label activity shown on the dashboard (all instances).
+ */
+export async function refreshLabelActivity(): Promise<void> {
+  try {
+    stats.labelStore = await fetchLabelActivity();
+  } catch (error) {
+    console.error('❌ Failed to refresh label activity from the database:', error);
+  }
+}
+
 export function startWebServer() {
+  // Without a LabelerServer (e.g. dry-run mode) there is no label table to read
+  if (labelerServer) {
+    // The label table exists once the startup gate opens
+    void labelStoreReady.then(refreshLabelActivity);
+    setInterval(() => void refreshLabelActivity(), LABEL_ACTIVITY_REFRESH_MS).unref();
+  }
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Web Dashboard running at http://localhost:${PORT}`);
     console.log(`🔌 WebSocket Server listening at ws://localhost:${PORT}/ws`);

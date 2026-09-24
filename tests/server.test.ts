@@ -291,6 +291,65 @@ describe('WebSocket Protocol Proxy', () => {
     assert.strictEqual(res.status, 403);
   }));
 
+  test('should serve recent labels from the database grouped by post', cleanErrors(async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({
+      rows: [
+        { uri: 'at://did:plc:a/app.bsky.feed.post/2', val: 'world', cts: '2026-09-24T01:00:02.000Z' },
+        { uri: 'at://did:plc:a/app.bsky.feed.post/1', val: 'us', cts: '2026-09-24T01:00:01.000Z' },
+      ],
+    })) as any;
+    try {
+      const res = await fetch('http://127.0.0.1:14100/api/labels/recent');
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(await res.json(), [
+        { uri: 'at://did:plc:a/app.bsky.feed.post/2', labels: ['world'], timestamp: '2026-09-24T01:00:02.000Z' },
+        { uri: 'at://did:plc:a/app.bsky.feed.post/1', labels: ['us'], timestamp: '2026-09-24T01:00:01.000Z' },
+      ]);
+
+      pool.query = (async () => { throw new Error('database unavailable'); }) as any;
+      const failed = await fetch('http://127.0.0.1:14100/api/labels/recent');
+      assert.strictEqual(failed.status, 500);
+    } finally {
+      pool.query = originalQuery;
+    }
+  }));
+
+  test('should return no recent labels without a LabelerServer (dry-run)', cleanErrors(async () => {
+    setLabelerServer(null);
+    try {
+      const res = await fetch('http://127.0.0.1:14100/api/labels/recent');
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(await res.json(), []);
+    } finally {
+      setLabelerServer({ mock: true });
+    }
+  }));
+
+  test('should hold the recent-labels request until the label table is ready', cleanErrors(async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({ rows: [{ uri: 'at://x', val: 'us', cts: '2026-09-24T01:00:00.000Z' }] })) as any;
+    initLabelStoreGate();
+    try {
+      let settled = false;
+      const response = fetch('http://127.0.0.1:14100/api/labels/recent').finally(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.strictEqual(settled, false, 'Must wait for the startup gate');
+
+      setLabelerServer(null);
+      await prepareLabelStore(); // Opens the gate
+      setLabelerServer({ mock: true });
+      const res = await response;
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(await res.json(), [{ uri: 'at://x', labels: ['us'], timestamp: '2026-09-24T01:00:00.000Z' }]);
+    } finally {
+      pool.query = originalQuery;
+      setLabelerServer({ mock: true });
+    }
+  }));
+
   test('should successfully proxy bidirectional messages', cleanErrors(async () => {
     clearMockTargetConnections();
     const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels');

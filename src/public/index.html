@@ -69,6 +69,11 @@
         <span>⚠️ <strong>Dry-Run Mode Active:</strong> Posts are being scanned and matched locally, but labels are <u>not</u> being published to the live Bluesky network.</span>
       </div>
 
+      <!-- Shown when this instance is on firehose standby -->
+      <div class="standby-banner hidden" id="standby-banner">
+        <span>⏸️ <strong>Standby instance:</strong> another instance is processing the firehose and issuing labels. Posts processed, NYT links, throughput and the live log only count this instance, so they stay at 0 until it takes over (after a deploy or instance replacement, within about 30 minutes). Label totals and history come from the database and include every instance.</span>
+      </div>
+
       <!-- Tab: Overview -->
       <section class="tab-pane active" id="tab-overview">
         <header class="tab-header">
@@ -99,8 +104,9 @@
           <div class="stat-card">
             <div class="stat-icon blue">🏷️</div>
             <div class="stat-info">
-              <h3>Labels Emitted</h3>
+              <h3>Labels Issued</h3>
               <p class="stat-value" id="labels-count">0</p>
+              <p class="stat-sub" id="labels-sub"></p>
             </div>
             <div class="card-glow"></div>
           </div>
@@ -144,6 +150,10 @@
               <div class="diag-item">
                 <span class="diag-label">Last Post Received</span>
                 <span id="diag-last-time" class="diag-value">-</span>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">Last Label Issued</span>
+                <span id="diag-last-label" class="diag-value">-</span>
               </div>
               <div class="diag-item">
                 <span class="diag-label">Auto-Reconnects</span>
