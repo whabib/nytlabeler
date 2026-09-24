@@ -103,11 +103,10 @@ describe('Dashboard escapes outside data', () => {
     assert.deepStrictEqual(tags, ['US', PAYLOAD]);
   });
 
-  test('keeps the Bluesky post link inside its href, URL-encoded', () => {
-    const link = document.querySelector('#history-tbody a') as HTMLAnchorElement;
-    assert.ok(link);
-    assert.strictEqual(link.getAttributeNames().includes('onmouseover'), false);
-    assert.ok(link.href.startsWith('https://bsky.app/profile/x%22%20onmouseover%3D%22'));
+  test('gives a post with a malformed DID or record key no link at all', () => {
+    const history = document.getElementById('history-tbody')!;
+    assert.strictEqual(history.querySelectorAll('a').length, 0);
+    assert.strictEqual(history.querySelectorAll('[onmouseover]').length, 0);
   });
 
   test('shows author names and sections as literal text', () => {
@@ -190,6 +189,12 @@ describe('Dashboard on a standby instance', () => {
     const tags = [...rows[0].querySelectorAll('.emitted-tags-cell span')].map((el) => el.textContent);
     assert.deepStrictEqual(tags, ['politics', PAYLOAD]);
     assert.match(rows[0].querySelector('.post-text-cell')!.textContent!, /not recorded on this instance/);
+    // Valid DIDs and record keys link to bsky.app verbatim; bsky.app can't resolve %3A-encoded DIDs
+    assert.strictEqual(rows[0].querySelector('a'), null, 'The malformed record key gets no link');
+    assert.strictEqual(
+      (rows[1].querySelector('a') as HTMLAnchorElement).getAttribute('href'),
+      'https://bsky.app/profile/did:plc:other/post/abc',
+    );
     assert.strictEqual(document.querySelectorAll('img, [onerror], [onmouseover]').length, 0);
     assert.strictEqual(window.__xss, undefined);
   });
