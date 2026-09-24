@@ -138,7 +138,7 @@ describe('Dashboard on a standby instance', () => {
       // Labels issued by the leader, read from the database
       '/api/labels/recent': [
         { uri: `at://did:plc:leaderpost/app.bsky.feed.post/${ATTRIBUTE_BREAKOUT}`, labels: ['politics', PAYLOAD], timestamp: lastLabelAt },
-        { uri: 'at://did:plc:other/app.bsky.feed.post/abc', labels: ['us'], timestamp: lastLabelAt },
+        { uri: 'at://did:plc:ewvi7nxzyoun6zhxrhs64oiz/app.bsky.feed.post/abc', labels: ['us'], timestamp: lastLabelAt },
       ],
     }));
     standbyStats = {
@@ -193,7 +193,7 @@ describe('Dashboard on a standby instance', () => {
     assert.strictEqual(rows[0].querySelector('a'), null, 'The malformed record key gets no link');
     assert.strictEqual(
       (rows[1].querySelector('a') as HTMLAnchorElement).getAttribute('href'),
-      'https://bsky.app/profile/did:plc:other/post/abc',
+      'https://bsky.app/profile/did:plc:ewvi7nxzyoun6zhxrhs64oiz/post/abc',
     );
     assert.strictEqual(document.querySelectorAll('img, [onerror], [onmouseover]').length, 0);
     assert.strictEqual(window.__xss, undefined);
@@ -218,4 +218,58 @@ describe('Dashboard on a standby instance', () => {
       leader.window.close();
     }
   });
+});
+
+describe('Bluesky post links in the history', () => {
+  const PLC = 'did:plc:sjk4jkkdt6gvx3wablhyeqo7';
+  const RKEY = '3mwa5nrez5k2a';
+  // Each malformed case is paired with a valid counterpart, so each check is tested on its own
+  const cases = [
+    { name: 'valid did:plc', did: PLC, rkey: RKEY, href: `https://bsky.app/profile/${PLC}/post/${RKEY}` },
+    { name: 'valid did:web', did: 'did:web:example.com', rkey: RKEY, href: `https://bsky.app/profile/did:web:example.com/post/${RKEY}` },
+    { name: 'empty DID segment', did: 'did:plc:a::b', rkey: RKEY, href: null },
+    { name: 'non-hex percent escape in DID', did: 'did:plc:ab%zzcd', rkey: RKEY, href: null },
+    { name: 'attribute breakout in DID', did: ATTRIBUTE_BREAKOUT, rkey: RKEY, href: null },
+    { name: 'attribute breakout in record key', did: PLC, rkey: ATTRIBUTE_BREAKOUT, href: null },
+    { name: 'dot-dot record key', did: PLC, rkey: '..', href: null },
+  ];
+  let window: any;
+  let document: Document;
+
+  before(async () => {
+    let send: (message: unknown) => void;
+    ({ window, document, send } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': {},
+    }));
+    send({
+      type: 'init',
+      stats: BASE_STATS,
+      recentLabels: cases.map((c, i) => ({
+        id: String(i),
+        uri: `at://${c.did}/app.bsky.feed.post/${c.rkey}`,
+        authorDid: c.did,
+        text: c.name, // Identifies the row
+        labels: ['us'],
+        title: 'T',
+        timestamp: new Date().toISOString(),
+      })),
+    });
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  for (const c of cases) {
+    test(`${c.href ? 'links' : 'does not link'} a post with ${c.name}`, () => {
+      const row = [...document.querySelectorAll('#history-tbody tr')]
+        .find((tr) => tr.querySelector('.post-text-cell')!.textContent === c.name)!;
+      assert.ok(row, `row for ${c.name}`);
+      const link = row.querySelector('a');
+      assert.strictEqual(link?.getAttribute('href') ?? null, c.href);
+      assert.strictEqual(row.querySelectorAll('[onmouseover]').length, 0);
+    });
+  }
 });
