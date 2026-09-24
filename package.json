@@ -1,6 +1,6 @@
 {
   "name": "nytlabeler",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Automated Bluesky labeler for NY Times articles with monitoring dashboard",
   "type": "module",
   "main": "dist/main.js",
