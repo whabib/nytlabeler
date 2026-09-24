@@ -324,7 +324,14 @@ app.get('/api/history', (req, res) => {
 
 // Recent labels from the database, so a standby instance can show what the leader issued
 app.get('/api/labels/recent', async (req, res) => {
+  // No label table without a LabelerServer (e.g. dry-run mode); the dashboard uses its own log
+  if (!labelerServer) {
+    res.json([]);
+    return;
+  }
   try {
+    // The label table exists once the startup gate opens
+    await labelStoreReady;
     res.json(await fetchRecentPostLabels());
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch recent labels' });
@@ -375,9 +382,12 @@ export async function refreshLabelActivity(): Promise<void> {
 }
 
 export function startWebServer() {
-  // The label table exists once the startup gate opens
-  void labelStoreReady.then(refreshLabelActivity);
-  setInterval(() => void refreshLabelActivity(), LABEL_ACTIVITY_REFRESH_MS).unref();
+  // Without a LabelerServer (e.g. dry-run mode) there is no label table to read
+  if (labelerServer) {
+    // The label table exists once the startup gate opens
+    void labelStoreReady.then(refreshLabelActivity);
+    setInterval(() => void refreshLabelActivity(), LABEL_ACTIVITY_REFRESH_MS).unref();
+  }
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Web Dashboard running at http://localhost:${PORT}`);

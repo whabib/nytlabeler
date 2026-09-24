@@ -167,7 +167,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Label counts come from the database, so they include labels issued by any instance
     const store = stats.labelStore;
     if (labelsEl) labelsEl.textContent = (store ? store.total : stats.labelsEmitted).toLocaleString();
-    if (labelsSubEl) labelsSubEl.textContent = store ? `${store.lastHour.toLocaleString()} in the last hour · all instances` : '';
+    if (labelsSubEl) {
+      // At its scan limit the last-hour count is a lower bound
+      const lastHour = `${store?.lastHour.toLocaleString()}${store?.lastHourCapped ? '+' : ''}`;
+      labelsSubEl.textContent = store ? `${lastHour} in the last hour · all instances` : '';
+    }
     if (store) {
       lastLabelAtStr = store.lastLabelAt;
       updateRelativeTime();

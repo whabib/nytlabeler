@@ -127,10 +127,11 @@ describe('Dashboard escapes outside data', () => {
 describe('Dashboard on a standby instance', () => {
   let window: any;
   let document: Document;
+  let send: (message: unknown) => void;
+  let standbyStats: any;
   const lastLabelAt = new Date(Date.now() - 12_000).toISOString();
 
   before(async () => {
-    let send: (message: unknown) => void;
     ({ window, document, send } = await loadDashboard({
       '/api/authors': [],
       '/api/categories': { sections: [], subsections: [] },
@@ -141,7 +142,7 @@ describe('Dashboard on a standby instance', () => {
         { uri: 'at://did:plc:other/app.bsky.feed.post/abc', labels: ['us'], timestamp: lastLabelAt },
       ],
     }));
-    const standbyStats = {
+    standbyStats = {
       ...BASE_STATS,
       postsProcessed: 0, nytLinksDetected: 0, labelsEmitted: 0, throughput: 0,
       firehoseConnected: false,
@@ -173,6 +174,14 @@ describe('Dashboard on a standby instance', () => {
     assert.strictEqual(document.getElementById('labels-count')!.textContent, (528909).toLocaleString());
     assert.match(document.getElementById('labels-sub')!.textContent!, /214 in the last hour · all instances/);
     assert.match(document.getElementById('diag-last-label')!.textContent!, /^1\ds ago$/);
+  });
+
+  test('shows the last-hour count as a lower bound at its scan limit', () => {
+    send({
+      type: 'heartbeat',
+      stats: { ...standbyStats, labelStore: { total: 600000, lastHour: 5000, lastHourCapped: true, lastLabelAt } },
+    });
+    assert.match(document.getElementById('labels-sub')!.textContent!, new RegExp(`${(5000).toLocaleString()}\\+ in the last hour`));
   });
 
   test('lists recent labels from the database, escaped, without post text', () => {
