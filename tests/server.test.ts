@@ -291,6 +291,30 @@ describe('WebSocket Protocol Proxy', () => {
     assert.strictEqual(res.status, 403);
   }));
 
+  test('should serve recent labels from the database grouped by post', cleanErrors(async () => {
+    const originalQuery = pool.query;
+    pool.query = (async () => ({
+      rows: [
+        { uri: 'at://did:plc:a/app.bsky.feed.post/2', val: 'world', cts: '2026-09-24T01:00:02.000Z' },
+        { uri: 'at://did:plc:a/app.bsky.feed.post/1', val: 'us', cts: '2026-09-24T01:00:01.000Z' },
+      ],
+    })) as any;
+    try {
+      const res = await fetch('http://127.0.0.1:14100/api/labels/recent');
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(await res.json(), [
+        { uri: 'at://did:plc:a/app.bsky.feed.post/2', labels: ['world'], timestamp: '2026-09-24T01:00:02.000Z' },
+        { uri: 'at://did:plc:a/app.bsky.feed.post/1', labels: ['us'], timestamp: '2026-09-24T01:00:01.000Z' },
+      ]);
+
+      pool.query = (async () => { throw new Error('database unavailable'); }) as any;
+      const failed = await fetch('http://127.0.0.1:14100/api/labels/recent');
+      assert.strictEqual(failed.status, 500);
+    } finally {
+      pool.query = originalQuery;
+    }
+  }));
+
   test('should successfully proxy bidirectional messages', cleanErrors(async () => {
     clearMockTargetConnections();
     const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels');

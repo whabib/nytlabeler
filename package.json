@@ -10,7 +10,7 @@
     "build": "tsc",
     "publish-definitions": "tsx src/publish-definitions.ts",
     "setup-labeler": "npx labeler setup",
-    "test": "tsx --test tests/dashboard.test.ts tests/database.test.ts tests/firehose-leader.test.ts tests/firehose.test.ts tests/jetstream.test.ts tests/labeler.test.ts tests/server.test.ts"
+    "test": "tsx --test tests/dashboard.test.ts tests/database.test.ts tests/firehose-leader.test.ts tests/firehose.test.ts tests/jetstream.test.ts tests/label-activity.test.ts tests/labeler.test.ts tests/server.test.ts"
   },
   "dependencies": {
     "@atproto/api": "^0.13.11",

@@ -30,6 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let ws;
   let recentLabels = [];
   let lastEventTimeStr = null;
+  let lastLabelAtStr = null;
+  // Recent labels from the database (all instances), used when this instance has none of its own
+  let dbRecentLabels = [];
   let isToggling = false;
   let lastToggleTime = 0; // Cooldown to prevent race conditions with in-flight heartbeats
   const maxConsoleLines = 50;
@@ -38,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const processedEl = document.getElementById('processed-count');
   const nytEl = document.getElementById('nyt-count');
   const labelsEl = document.getElementById('labels-count');
+  const labelsSubEl = document.getElementById('labels-sub');
+  const standbyBannerEl = document.getElementById('standby-banner');
+  const diagLastLabelEl = document.getElementById('diag-last-label');
   const throughputEl = document.getElementById('throughput-val');
   const uptimeEl = document.getElementById('uptime-val');
   const wsStatusEl = document.getElementById('ws-status');
@@ -158,7 +164,19 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateStats(stats) {
     if (processedEl) processedEl.textContent = stats.postsProcessed.toLocaleString();
     if (nytEl) nytEl.textContent = stats.nytLinksDetected.toLocaleString();
-    if (labelsEl) labelsEl.textContent = stats.labelsEmitted.toLocaleString();
+    // Label counts come from the database, so they include labels issued by any instance
+    const store = stats.labelStore;
+    if (labelsEl) labelsEl.textContent = (store ? store.total : stats.labelsEmitted).toLocaleString();
+    if (labelsSubEl) labelsSubEl.textContent = store ? `${store.lastHour.toLocaleString()} in the last hour · all instances` : '';
+    if (store) {
+      lastLabelAtStr = store.lastLabelAt;
+      updateRelativeTime();
+    }
+
+    // A standby instance isn't processing the firehose; another instance is
+    const standby = stats.firehoseEnabled === true && stats.firehoseLeader === false;
+    if (standbyBannerEl) standbyBannerEl.classList.toggle('hidden', !standby);
+    updateSidebarStatus(stats, standby);
 
     // Update Stream Diagnostics
     if (stats.lastEventTime) {
@@ -185,9 +203,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (diagStatusEl) {
+      diagStatusEl.title = '';
       if (stats.firehoseConnected) {
         diagStatusEl.innerHTML = '<span class="status-dot green pulsing"></span> Online';
         diagStatusEl.className = 'diag-value online';
+      } else if (standby) {
+        diagStatusEl.innerHTML = '<span class="status-dot yellow pulsing"></span> Standby';
+        diagStatusEl.className = 'diag-value connecting';
+        diagStatusEl.title = 'Another instance is processing the firehose';
       } else if (stats.reconnectCount > 0) {
         diagStatusEl.innerHTML = '<span class="status-dot yellow pulsing"></span> Connecting';
         diagStatusEl.className = 'diag-value connecting';
@@ -218,13 +241,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!historyTbody) return;
     
     const query = filterText.toLowerCase().trim();
-    const filtered = recentLabels.filter(entry => {
+    const filtered = historyEntries().filter(entry => {
       if (!query) return true;
       return (
-        entry.text.toLowerCase().includes(query) ||
+        (entry.text || '').toLowerCase().includes(query) ||
         (entry.title && entry.title.toLowerCase().includes(query)) ||
         entry.labels.some(l => l.toLowerCase().includes(query)) ||
-        entry.authorDid.toLowerCase().includes(query)
+        (entry.authorDid || '').toLowerCase().includes(query)
       );
     });
 
@@ -257,9 +280,13 @@ document.addEventListener('DOMContentLoaded', () => {
         <tr>
           <td class="history-time">${escapeHtml(time)}</td>
           <td>
-            <div class="article-title-cell">${escapeHtml(entry.title || 'Unknown Title')}</div>
+            <div class="article-title-cell">${entry.fromDatabase
+              ? '<span class="muted-cell">—</span>'
+              : escapeHtml(entry.title || 'Unknown Title')}</div>
           </td>
-          <td class="post-text-cell">${escapeHtml(entry.text)}</td>
+          <td class="post-text-cell">${entry.text == null
+            ? '<span class="muted-cell">Post text not recorded on this instance</span>'
+            : escapeHtml(entry.text)}</td>
           <td><div class="emitted-tags-cell">${tags}</div></td>
           <td>
             <div style="display: flex; gap: 8px;">
@@ -269,6 +296,38 @@ document.addEventListener('DOMContentLoaded', () => {
         </tr>
       `;
     }).join('');
+  }
+
+  // This instance's own labeling log, or else the database's recent labels (all instances).
+  // Database entries have no post text or article title.
+  function historyEntries() {
+    if (recentLabels.length > 0) return recentLabels;
+    return dbRecentLabels.map(post => ({
+      id: post.uri,
+      uri: post.uri,
+      authorDid: String(post.uri).split('/')[2] || '',
+      text: null,
+      title: null,
+      labels: post.labels,
+      timestamp: post.timestamp,
+      fromDatabase: true,
+    }));
+  }
+
+  async function fetchDbRecentLabels() {
+    try {
+      const res = await fetch('/api/labels/recent');
+      const posts = await res.json();
+      if (!Array.isArray(posts)) return;
+      dbRecentLabels = posts;
+      if (recentLabels.length === 0) renderHistory(historySearchValue());
+    } catch (err) {
+      console.error('Failed to load recent labels:', err);
+    }
+  }
+
+  function historySearchValue() {
+    return document.getElementById('history-search')?.value || '';
   }
 
   // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML
@@ -367,8 +426,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ws.onopen = () => {
       console.log('🔌 Connected to Server WebSocket');
+      // The firehose state itself arrives with the first stats update
       if (wsStatusEl) {
-        wsStatusEl.innerHTML = '<span class="status-dot green pulsing"></span> Firehose Online';
+        wsStatusEl.innerHTML = '<span class="status-dot green pulsing"></span> Connected';
         wsStatusEl.className = 'connection-status online';
       }
       appendTerminalLine('[SYSTEM] Socket successfully connected to backend.', 'system');
@@ -451,25 +511,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Update relative time for last post received
   function updateRelativeTime() {
-    if (!diagLastTimeEl) return;
-    if (!lastEventTimeStr) {
-      diagLastTimeEl.textContent = 'Never';
-      return;
+    if (diagLastTimeEl) diagLastTimeEl.textContent = formatAgo(lastEventTimeStr);
+    if (diagLastLabelEl) diagLastLabelEl.textContent = formatAgo(lastLabelAtStr);
+  }
+
+  // Sidebar status reflects the firehose on this instance, not just the dashboard connection
+  function updateSidebarStatus(stats, standby) {
+    if (!wsStatusEl || !ws || ws.readyState !== WebSocket.OPEN) return;
+    let dot = 'green', text = 'Firehose Online', state = 'online';
+    if (!stats.firehoseConnected) {
+      if (standby) [dot, text, state] = ['yellow', 'Firehose Standby', 'connecting'];
+      else if (stats.firehoseEnabled === false) [dot, text, state] = ['yellow', 'Firehose Paused', 'connecting'];
+      else [dot, text, state] = ['red', 'Firehose Offline', 'offline'];
     }
-    const ts = Date.parse(lastEventTimeStr);
-    if (!Number.isFinite(ts)) {
-      diagLastTimeEl.textContent = '-';
-      return;
-    }
-    const diffMs = Date.now() - ts;
-    const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
-    
-    if (diffSecs < 60) {
-      diagLastTimeEl.textContent = `${diffSecs}s ago`;
-    } else {
-      const diffMins = Math.floor(diffSecs / 60);
-      diagLastTimeEl.textContent = `${diffMins}m ${diffSecs % 60}s ago`;
-    }
+    wsStatusEl.innerHTML = `<span class="status-dot ${dot} pulsing"></span> ${text}`;
+    wsStatusEl.className = `connection-status ${state}`;
+  }
+
+  function formatAgo(isoTime) {
+    if (!isoTime) return 'Never';
+    const ts = Date.parse(isoTime);
+    if (!Number.isFinite(ts)) return '-';
+    const diffSecs = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSecs < 60) return `${diffSecs}s ago`;
+    const diffMins = Math.floor(diffSecs / 60);
+    if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
+    return `${Math.floor(diffMins / 60)}h ${diffMins % 60}m ago`;
   }
 
   // Local interval to update ticking timestamps
@@ -539,4 +606,6 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
   fetchUniverseData();
   fetchSystemConfig();
+  fetchDbRecentLabels();
+  setInterval(fetchDbRecentLabels, 30000);
 });

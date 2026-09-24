@@ -149,8 +149,9 @@ DEPLOY_FLAGS=(
   "--allow-unauthenticated"
   "--max-instances" "1"
   # Cloud Run closes WebSocket connections at the request timeout (default 300s), forcing
-  # subscribeLabels clients to reconnect and replay; 3600s is the maximum
-  "--timeout" "3600"
+  # subscribeLabels clients to reconnect and replay. It also bounds how long an old instance
+  # lingers (holding firehose leadership) after a deploy or instance replacement.
+  "--timeout" "1800"
   "--concurrency" "1000"
   # Node runs the app on one thread; since the Postgres cutover, CPU peaks at ~6% of 2 vCPUs
   "--cpu" "1"

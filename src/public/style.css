@@ -243,6 +243,29 @@ body {
   animation: slideInDown 0.5s ease-out;
 }
 
+.standby-banner {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.03) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  color: oklch(85% 0.08 240);
+  font-size: 0.9rem;
+  backdrop-filter: blur(10px);
+  animation: slideInDown 0.5s ease-out;
+}
+
+.stat-sub {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.muted-cell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .hidden {
   display: none !important;
 }

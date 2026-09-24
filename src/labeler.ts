@@ -27,6 +27,8 @@ export const stats = {
   firehoseEnabled: true,
   /** Whether this instance holds firehose leadership (only the leader connects). */
   firehoseLeader: false,
+  /** Label activity across all instances, from the database (see label-activity.ts). */
+  labelStore: null as { total: number; lastHour: number; lastLabelAt: string | null } | null,
 };
 
 // Set of active opinion author slugs to filter which author labels we publish
