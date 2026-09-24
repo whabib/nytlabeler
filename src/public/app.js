@@ -278,7 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }).join(' ');
 
       // Build safe external links
-      const postUrl = `https://bsky.app/profile/${encodeURIComponent(entry.authorDid)}/post/${encodeURIComponent(entry.uri.split('/').pop())}`;
+      const postUrl = bskyPostUrl(entry.authorDid, entry.uri);
 
       return `
         <tr>
@@ -294,7 +294,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <td><div class="emitted-tags-cell">${tags}</div></td>
           <td>
             <div style="display: flex; gap: 8px;">
-              <a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn">Post 🦋</a>
+              ${postUrl
+                ? `<a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener noreferrer" class="action-btn">Post 🦋</a>`
+                : '<span class="muted-cell">—</span>'}
             </div>
           </td>
         </tr>
@@ -332,6 +334,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function historySearchValue() {
     return document.getElementById('history-search')?.value || '';
+  }
+
+  // bsky.app needs the DID and record key verbatim (it doesn't resolve percent-encoded DIDs),
+  // so check them instead of encoding them. Bluesky accounts use only two DID methods:
+  // did:plc (24 base32 characters) and did:web (a hostname, with an optional %3A-encoded port).
+  // Valid values can't contain quotes, spaces or angle brackets; anything else gets no link.
+  const DID_PATTERNS = [
+    /^did:plc:[a-z2-7]{24}$/,
+    /^did:web:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?:%3A[0-9]{1,5})?$/,
+  ];
+  const RECORD_KEY_PATTERN = /^[a-zA-Z0-9._:~-]{1,512}$/;
+
+  function bskyPostUrl(did, uri) {
+    const recordKey = String(uri ?? '').split('/').pop();
+    if (!DID_PATTERNS.some((pattern) => pattern.test(String(did ?? '')))) return null;
+    if (!RECORD_KEY_PATTERN.test(recordKey) || recordKey === '.' || recordKey === '..') return null;
+    return `https://bsky.app/profile/${did}/post/${recordKey}`;
   }
 
   // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML
