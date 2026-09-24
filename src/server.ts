@@ -21,6 +21,11 @@ export const wss = new WebSocketServer({ noServer: true });
 // Initialize WebSocket Server for Labeler proxying
 export const labelerProxyWss = new WebSocketServer({ noServer: true });
 
+// Backlog per proxied subscriber at which the proxy stops reading from the LabelerServer,
+// and the level it must drain to before reading resumes
+export const PROXY_MAX_BUFFERED_BYTES = 1024 * 1024;
+export const PROXY_RESUME_BUFFERED_BYTES = 256 * 1024;
+
 // Track active WebSocket clients
 const clients = new Set<WebSocket>();
 
@@ -112,9 +117,21 @@ labelerProxyWss.on('connection', async (clientWs, request) => {
     }
   });
 
+  // Stop reading from the LabelerServer while a slow subscriber has a backlog, so the
+  // LabelerServer's own backpressure (it pages replays and waits for its socket to drain)
+  // applies end to end instead of the whole replay piling up in this process's memory
+  const resumeWhenDrained = () => {
+    if (targetWs.isPaused && clientWs.bufferedAmount <= PROXY_RESUME_BUFFERED_BYTES) {
+      targetWs.resume();
+    }
+  };
+
   targetWs.on('message', (data, isBinary) => {
     if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(data, { binary: isBinary });
+      clientWs.send(data, { binary: isBinary }, resumeWhenDrained);
+      if (clientWs.bufferedAmount > PROXY_MAX_BUFFERED_BYTES) {
+        targetWs.pause();
+      }
     }
   });
 

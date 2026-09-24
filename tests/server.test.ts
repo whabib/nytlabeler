@@ -8,14 +8,24 @@ process.env.PORT = '14100';
 process.env.LABELER_PORT = '14101';
 process.env.DRY_RUN = 'true';
 
+// The proxy logs every connection. That output can garble the test runner's IPC stream
+// ("Unable to deserialize cloned data"), so keep it quiet; fatal errors below still print.
+const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+before(() => {
+  console.log = console.warn = console.error = () => {};
+});
+after(() => {
+  Object.assign(console, originalConsole);
+});
+
 // 1. Add process-wide error handling to catch unhandled errors/rejections before the runner IPC channel does
 process.on('uncaughtException', (err) => {
-  console.error('🔥 UNCAUGHT EXCEPTION IN SERVER TEST WORKER:', err);
+  originalConsole.error('🔥 UNCAUGHT EXCEPTION IN SERVER TEST WORKER:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('🔥 UNHANDLED REJECTION IN SERVER TEST WORKER:', reason);
+  originalConsole.error('🔥 UNHANDLED REJECTION IN SERVER TEST WORKER:', reason);
   process.exit(1);
 });
 
@@ -33,7 +43,7 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 }
 
 // Dynamically import to ensure process.env is read correctly
-const { server, wss, labelerProxyWss } = await import('../src/server.js');
+const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES } = await import('../src/server.js');
 const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 
@@ -474,6 +484,55 @@ describe('WebSocket Protocol Proxy', () => {
     await waitForConnection(clientWs);
 
     assert.strictEqual(await targetConnected, '/xrpc/com.atproto.label.subscribeLabels?cursor=invalid123');
+    clientWs.close();
+  }));
+
+  test('should pass a slow subscriber\'s backpressure through to the LabelerServer', cleanErrors(async () => {
+    clearMockTargetConnections();
+    const clientWs = createClientWebSocket('ws://127.0.0.1:14100/xrpc/com.atproto.label.subscribeLabels?cursor=0');
+    await waitForConnection(clientWs);
+    const targetWs = mockTargetConnections[0];
+    const proxyClientWs = [...labelerProxyWss.clients].at(-1)!; // The newest connection
+
+    // The subscriber stops reading, like a client that falls behind during a long replay
+    clientWs.pause();
+
+    // Send a large replay the way the LabelerServer does: wait whenever its own socket
+    // has 1 MB queued, and stop once it has been blocked for a while
+    const chunk = Buffer.alloc(64 * 1024, 1);
+    const replayBytes = 64 * 1024 * 1024;
+    let sent = 0;
+    let maxProxyBuffered = 0;
+    while (sent < replayBytes) {
+      let waitedMs = 0;
+      while (targetWs.bufferedAmount > 1024 * 1024 && waitedMs < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        waitedMs += 10;
+      }
+      if (waitedMs >= 500) break;
+      targetWs.send(chunk);
+      sent += chunk.length;
+      await new Promise((resolve) => setImmediate(resolve));
+      maxProxyBuffered = Math.max(maxProxyBuffered, proxyClientWs.bufferedAmount);
+    }
+
+    assert.ok(sent < replayBytes / 4, `The LabelerServer must be held back, but it sent ${sent} bytes`);
+    assert.ok(
+      maxProxyBuffered <= PROXY_MAX_BUFFERED_BYTES + chunk.length,
+      `The proxy buffered ${maxProxyBuffered} bytes for one subscriber`,
+    );
+
+    // Once the subscriber reads again, everything sent arrives
+    let received = 0;
+    const allReceived = new Promise<void>((resolve) => {
+      clientWs.on('message', (data: Buffer) => {
+        received += data.length;
+        if (received === sent) resolve();
+      });
+    });
+    clientWs.resume();
+    await allReceived;
+    assert.strictEqual(received, sent);
     clientWs.close();
   }));
 });
