@@ -9,9 +9,9 @@ set -euo pipefail
 # --- CONFIGURATION DEFAULTS ---
 PROJECT_ID="pointless-enterprises"
 REGION="us-central1"
-DB_HOST_PROD="10.73.128.3" # Private VPC IP of Cloud SQL nytdata
-DB_NAME="nytdata"
-DB_USER="nytdata"
+# Cloud SQL instance, for the Cloud SQL connector fallback (the database address itself comes
+# from the DATABASE_URL secret)
+CLOUDSQL_INSTANCE="nytdata"
 
 # Help / Usage block
 usage() {
@@ -116,7 +116,7 @@ else
 fi
 
 # Build list of environment variables for Cloud Run
-CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${DB_NAME}"
+CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${CLOUDSQL_INSTANCE}"
 
 ENV_VARS="ENV=${APP_ENV}"
 ENV_VARS="${ENV_VARS},DRY_RUN=false"

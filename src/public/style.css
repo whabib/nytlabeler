@@ -859,6 +859,36 @@ body {
   cursor: not-allowed;
 }
 
+.handle-link {
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.handle-link[href] {
+  color: var(--neon-blue);
+}
+
+.handle-link[href]:hover {
+  border-color: var(--neon-blue);
+  text-decoration: underline;
+}
+
+.handle-link:not([href]) {
+  opacity: 0.6;
+}
+
+.db-status-badge.down {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--neon-red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.db-status-badge.checking {
+  background: rgba(234, 179, 8, 0.12);
+  color: var(--neon-yellow);
+  border-color: rgba(234, 179, 8, 0.3);
+}
+
 .db-status-badge {
   display: inline-flex;
   align-items: center;
@@ -877,6 +907,20 @@ body {
 @keyframes slideInDown {
   from { transform: translateY(-10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* A setting with its switch on the same line */
+.switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.setting-help {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 /* Custom CSS Toggle Switch */

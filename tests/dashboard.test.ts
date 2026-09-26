@@ -28,6 +28,7 @@ async function loadDashboard(responses: Record<string, unknown>) {
   });
   const window: any = dom.window;
   let socket: any;
+  const sent: unknown[] = []; // Messages the dashboard sends to its server
   // An Error stands for a failed request (HTTP 500)
   window.fetch = async (url: string) => {
     const response = responses[url];
@@ -43,7 +44,9 @@ async function loadDashboard(responses: Record<string, unknown>) {
     constructor() {
       socket = this;
     }
-    send() {}
+    send(data: string) {
+      sent.push(JSON.parse(data));
+    }
     close() {}
   };
 
@@ -59,7 +62,7 @@ async function loadDashboard(responses: Record<string, unknown>) {
   socket.onopen?.();
   await new Promise((resolve) => setTimeout(resolve, 20)); // Let the fetches resolve
   const send = (message: unknown) => socket.onmessage({ data: JSON.stringify(message) });
-  return { window, document: window.document as Document, send };
+  return { window, document: window.document as Document, send, sent };
 }
 
 describe('Dashboard escapes outside data', () => {
@@ -389,5 +392,138 @@ describe('Reports page', () => {
     (document.getElementById('reports-refresh') as HTMLElement).click();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.strictEqual(document.querySelectorAll('#reports-list .report-card').length, 4);
+  });
+});
+
+describe('Settings tab', () => {
+  async function settingsFor(stats: Record<string, unknown>) {
+    const { window, document } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', did: 'did:plc:diitczh77g62vvea5fjbbz6b', serviceUrl: 'https://example.test', ...stats },
+    });
+    const handle = document.getElementById('set-handle')!;
+    const result = { tag: handle.tagName, text: handle.textContent, href: handle.getAttribute('href'), target: handle.getAttribute('target'), rel: handle.getAttribute('rel') };
+    const dbHostField = document.getElementById('set-db-host');
+    window.close();
+    return { ...result, dbHostField };
+  }
+
+  test('links the active handle to its Bluesky profile in a new tab', async () => {
+    const handle = await settingsFor({ dryRun: false, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.deepStrictEqual(handle, {
+      tag: 'A',
+      text: 'nyt-labeler-dev.bsky.social',
+      href: 'https://bsky.app/profile/nyt-labeler-dev.bsky.social',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      dbHostField: null,
+    });
+  });
+
+  test('shows no link in dry-run mode, or for a value that is not a handle', async () => {
+    const dryRun = await settingsFor({ dryRun: true, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.strictEqual(dryRun.href, null);
+    assert.strictEqual(dryRun.text, 'nyt-labeler-dev.bsky.social (Dry-Run)');
+
+    const missing = await settingsFor({ dryRun: false });
+    assert.strictEqual(missing.href, null);
+    assert.strictEqual(missing.text, 'Unknown Handle');
+
+    // Anything else is shown as plain text, never as a link or HTML
+    for (const value of [PAYLOAD, ATTRIBUTE_BREAKOUT, 'javascript:alert(1)', 'user@example.com']) {
+      const handle = await settingsFor({ dryRun: false, bskyIdentifier: value });
+      assert.strictEqual(handle.href, null, `No link for ${value}`);
+      assert.strictEqual(handle.text, value);
+    }
+  });
+
+  test('no longer shows a database host field', async () => {
+    const { dbHostField } = await settingsFor({ dryRun: false, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.strictEqual(dbHostField, null);
+  });
+});
+
+describe('Database status badge', () => {
+  let window: any;
+  let document: Document;
+  let send: (message: unknown) => void;
+
+  before(async () => {
+    ({ window, document, send } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  function badge() {
+    const el = document.getElementById('db-status')!;
+    return { text: el.textContent!.trim(), classes: el.className, dot: el.querySelector('.status-dot')!.className };
+  }
+
+  test('says it is checking until the first result arrives', () => {
+    send({ type: 'init', stats: { ...BASE_STATS, database: null }, recentLabels: [] });
+    assert.deepStrictEqual(badge(), { text: 'Checking…', classes: 'db-status-badge checking', dot: 'status-dot yellow' });
+  });
+
+  test('shows a connected database with its round trip', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: true, latencyMs: 12.4, checkedAt: '2026-09-26T23:00:00.000Z' } } });
+    assert.deepStrictEqual(badge(), { text: 'Connected · 12 ms', classes: 'db-status-badge connected', dot: 'status-dot green' });
+    assert.match(document.getElementById('db-status')!.title, /^Last checked /);
+  });
+
+  test('shows an unreachable database in red', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: false, latencyMs: null, checkedAt: '2026-09-26T23:00:30.000Z' } } });
+    assert.deepStrictEqual(badge(), { text: 'Unreachable', classes: 'db-status-badge down', dot: 'status-dot red' });
+  });
+
+  test('never renders the latency as HTML', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: true, latencyMs: PAYLOAD, checkedAt: PAYLOAD } } });
+    assert.strictEqual(badge().text, 'Connected');
+    assert.strictEqual(document.querySelectorAll('img').length, 0);
+    assert.strictEqual(document.getElementById('db-status')!.title, '');
+  });
+});
+
+describe('Feed Listener switch', () => {
+  let window: any;
+  let document: Document;
+  let send: (message: unknown) => void;
+  let sent: unknown[];
+
+  before(async () => {
+    ({ window, document, send, sent } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+    send({ type: 'init', stats: { ...BASE_STATS, firehoseEnabled: false }, recentLabels: [] });
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('is on the Settings page, not the Overview page', () => {
+    const toggle = document.getElementById('firehose-switch')!;
+    assert.ok(document.getElementById('tab-settings')!.contains(toggle));
+    assert.strictEqual(document.getElementById('tab-overview')!.querySelector('.switch'), null);
+    assert.match(toggle.closest('.settings-card')!.textContent!, /Feed Listener/);
+  });
+
+  test('shows the saved setting from the server', () => {
+    assert.strictEqual((document.getElementById('firehose-switch') as HTMLInputElement).checked, false);
+  });
+
+  test('sends the new setting to the server when switched', () => {
+    const toggle = document.getElementById('firehose-switch') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new window.Event('change'));
+    assert.deepStrictEqual(sent.at(-1), { type: 'toggle', enabled: true });
   });
 });

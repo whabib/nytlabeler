@@ -134,13 +134,6 @@
             <h3>📡 Stream Diagnostics</h3>
             <div class="diag-list">
               <div class="diag-item">
-                <span class="diag-label">Feed Listener</span>
-                <label class="switch">
-                  <input type="checkbox" id="diag-switch" checked>
-                  <span class="slider"></span>
-                </label>
-              </div>
-              <div class="diag-item">
                 <span class="diag-label">Stream Status</span>
                 <span id="diag-status" class="diag-value offline">
                   <span class="status-dot red pulsing"></span> Offline
@@ -290,13 +283,31 @@
         </header>
 
         <div class="settings-grid">
+          <!-- Firehose Settings -->
+          <div class="settings-card glass">
+            <h3>📡 Firehose</h3>
+            <div class="settings-form">
+              <div class="form-group">
+                <div class="switch-row">
+                  <label for="firehose-switch">Feed Listener</label>
+                  <label class="switch">
+                    <input type="checkbox" id="firehose-switch" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <p class="setting-help">Turns reading the Bluesky firehose, and so labeling new posts, on or off. The setting is saved, and the instance processing the firehose applies it within about 10 seconds.</p>
+              </div>
+            </div>
+          </div>
+
           <!-- ATProto Settings -->
           <div class="settings-card glass">
             <h3>🔑 ATProto Credentials</h3>
             <div class="settings-form">
               <div class="form-group">
                 <label>Active Handle</label>
-                <input type="text" id="set-handle" class="glass-input" readonly>
+                <!-- Links to the account on bsky.app once the handle loads -->
+                <a id="set-handle" class="glass-input handle-link" target="_blank" rel="noopener noreferrer"></a>
               </div>
               <div class="form-group">
                 <label>Service URL (DID Root)</label>
@@ -314,17 +325,13 @@
             <h3>🗄️ PostgreSQL Database</h3>
             <div class="settings-form">
               <div class="form-group">
-                <label>Host IP / Address</label>
-                <input type="text" id="set-db-host" class="glass-input" readonly>
-              </div>
-              <div class="form-group">
                 <label>Database Name</label>
                 <input type="text" id="set-db-name" class="glass-input" readonly>
               </div>
               <div class="form-group">
                 <label>Connection Uptime Status</label>
-                <div class="db-status-badge">
-                  <span class="status-dot green"></span> Connected
+                <div class="db-status-badge checking" id="db-status">
+                  <span class="status-dot yellow"></span> Checking…
                 </div>
               </div>
             </div>

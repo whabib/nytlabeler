@@ -30,6 +30,8 @@ export const stats = {
   firehoseLeader: false,
   /** Label activity across all instances, from the database (see label-activity.ts). */
   labelStore: null as { total: number; lastHour: number; lastHourCapped: boolean; lastLabelAt: string | null } | null,
+  /** Result of the latest database check (see db-health.ts); null until the first one. */
+  database: null as { connected: boolean; latencyMs: number | null; checkedAt: string } | null,
 };
 
 // Set of active opinion author slugs to filter which author labels we publish
