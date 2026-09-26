@@ -170,6 +170,32 @@ describe('Labeler Logic', () => {
     assert.deepStrictEqual(inserts, []);
   });
 
+  test('should not wait for the articles to be recorded', async () => {
+    const originalQuery = pool.query;
+    let started = false;
+    // A metrics insert that never finishes, e.g. a locked table
+    pool.query = (() => {
+      started = true;
+      return new Promise(() => {});
+    }) as any;
+    const created: string[] = [];
+    setLabelerServer(signingServer(created));
+    try {
+      const labeled = issueLabelsForPost('at://did:plc:mock/app.bsky.feed.post/slow', 'did:plc:author', 'A story',
+        [{ id: 7, section: 'world', subsection: null, authors: [], title: 'Mock' }]);
+      const outcome = await Promise.race([
+        labeled.then(() => 'done'),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+      ]);
+      assert.strictEqual(outcome, 'done');
+    } finally {
+      pool.query = originalQuery;
+      setLabelerServer(null);
+    }
+    assert.deepStrictEqual(created, ['world']);
+    assert.strictEqual(started, true, 'The articles are still recorded');
+  });
+
   test('should still label a post when recording its articles fails', async () => {
     const originalQuery = pool.query;
     const originalError = console.error;
@@ -181,6 +207,7 @@ describe('Labeler Logic', () => {
     try {
       await issueLabelsForPost('at://did:plc:mock/app.bsky.feed.post/norecord', 'did:plc:author', 'A story',
         [{ id: 7, section: 'world', subsection: 'europe', authors: [], title: 'Mock' }]);
+      await new Promise((resolve) => setImmediate(resolve)); // The failure is logged after labeling returns
     } finally {
       pool.query = originalQuery;
       console.error = originalError;

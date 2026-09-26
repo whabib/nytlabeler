@@ -208,7 +208,8 @@ export async function issueLabelsForPost(
         });
       }
       console.log('✅ Successfully published labels for: %s', uri);
-      await recordPostArticles(uri, authorDid, articles.map((article) => article.id));
+      // Not awaited: a slow metrics table must not hold up labeling (it logs its own failures)
+      void recordPostArticles(uri, authorDid, articles.map((article) => article.id));
     } catch (error) {
       console.error('❌ Failed to publish labels for %s:', uri, error);
     }
