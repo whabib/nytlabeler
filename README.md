@@ -61,6 +61,27 @@ CREATE TABLE "_ArticleToAuthor" (
 CREATE UNIQUE INDEX "_ArticleToAuthor_AB_unique" ON "_ArticleToAuthor"("A", "B");
 ```
 
+### Tables the labeler creates
+
+The service creates these in the `labeler` schema at startup, one per environment (e.g. `_development`):
+
+- **`labeler.labels_<environment>`**: the signed labels, owned by the labeler library. Their ids are the `subscribeLabels` sequence numbers.
+- **`labeler.post_articles_<environment>`**: which nytdata articles each labeled post linked, for metrics. It has one row per (post, article) with the post `uri`, `author_did`, `article_id` (`"Article".id`) and `created_at`. It covers posts labeled from September 2026 on. Recording is best-effort and never holds up labeling.
+
+```sql
+-- Most-shared articles in the last week
+SELECT a.title, a.section, COUNT(*) AS posts
+FROM labeler.post_articles_development pa
+JOIN "Article" a ON a.id = pa.article_id
+WHERE pa.created_at > now() - interval '7 days'
+GROUP BY a.id ORDER BY posts DESC LIMIT 20;
+
+-- The labels a post received
+SELECT pa.article_id, l.val
+FROM labeler.post_articles_development pa
+JOIN labeler.labels_development l ON l.uri = pa.uri;
+```
+
 ---
 
 ## 🚀 Setup & Local Installation

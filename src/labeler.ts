@@ -1,6 +1,7 @@
 import { LabelerServer } from 'labeler';
 import { DID, SIGNING_KEY, DRY_RUN, ENV } from './config.js';
 import { pool, getActiveAuthors, slugify } from './database.js';
+import { preparePostArticlesTable, recordPostArticles, POST_ARTICLES_TABLE } from './post-articles.js';
 
 // Define matching types
 export interface IssuedLabelLog {
@@ -93,6 +94,13 @@ export async function prepareLabelStore(): Promise<void> {
   if (labelerServer) {
     await labelerServer.ready();
     console.log(`✅ Label table ${LABELS_TABLE} is ready.`);
+    // Metrics only: labeling goes ahead even if this table can't be created
+    try {
+      await preparePostArticlesTable();
+      console.log(`✅ Post articles table ${POST_ARTICLES_TABLE} is ready.`);
+    } catch (error) {
+      console.error(`⚠️ Failed to prepare ${POST_ARTICLES_TABLE}; post articles won't be recorded:`, error);
+    }
   } else {
     console.log('ℹ️ No LabelerServer initialized. Skipping label store preparation.');
   }
@@ -107,6 +115,8 @@ export async function prepareLabelStore(): Promise<void> {
  * @param metadata The article metadata parsed from the database
  */
 export interface ArticleMetadata {
+  /** The article's id in nytdata ("Article".id). */
+  id: number;
   section: string;
   subsection: string | null;
   authors: string[];
@@ -198,6 +208,8 @@ export async function issueLabelsForPost(
         });
       }
       console.log('✅ Successfully published labels for: %s', uri);
+      // Not awaited: a slow metrics table must not hold up labeling (it logs its own failures)
+      void recordPostArticles(uri, authorDid, articles.map((article) => article.id));
     } catch (error) {
       console.error('❌ Failed to publish labels for %s:', uri, error);
     }
