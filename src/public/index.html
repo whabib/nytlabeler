@@ -46,6 +46,9 @@
         <button class="nav-item" data-tab="history">
           <span class="nav-icon">📜</span> Label History
         </button>
+        <button class="nav-item" data-tab="reports">
+          <span class="nav-icon">📈</span> Reports
+        </button>
         <button class="nav-item" data-tab="settings">
           <span class="nav-icon">⚙️</span> Settings
         </button>
@@ -256,6 +259,24 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- Tab: Reports -->
+      <section class="tab-pane" id="tab-reports">
+        <header class="tab-header">
+          <div>
+            <h2>Reports</h2>
+            <p>The NYT articles linked in the most labeled Bluesky posts. Shares are counted from September 26, 2026, when recording began.</p>
+          </div>
+          <div class="history-controls">
+            <span class="reports-updated" id="reports-updated"></span>
+            <button type="button" class="action-btn" id="reports-refresh">Refresh</button>
+          </div>
+        </header>
+
+        <div class="reports-list" id="reports-list">
+          <!-- Dynamically populated -->
         </div>
       </section>
 
