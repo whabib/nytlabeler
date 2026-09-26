@@ -909,6 +909,20 @@ body {
   to { transform: translateY(0); opacity: 1; }
 }
 
+/* A setting with its switch on the same line */
+.switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.setting-help {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 /* Custom CSS Toggle Switch */
 .switch {
   position: relative;

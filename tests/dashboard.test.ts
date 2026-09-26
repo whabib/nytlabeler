@@ -28,6 +28,7 @@ async function loadDashboard(responses: Record<string, unknown>) {
   });
   const window: any = dom.window;
   let socket: any;
+  const sent: unknown[] = []; // Messages the dashboard sends to its server
   // An Error stands for a failed request (HTTP 500)
   window.fetch = async (url: string) => {
     const response = responses[url];
@@ -43,7 +44,9 @@ async function loadDashboard(responses: Record<string, unknown>) {
     constructor() {
       socket = this;
     }
-    send() {}
+    send(data: string) {
+      sent.push(JSON.parse(data));
+    }
     close() {}
   };
 
@@ -59,7 +62,7 @@ async function loadDashboard(responses: Record<string, unknown>) {
   socket.onopen?.();
   await new Promise((resolve) => setTimeout(resolve, 20)); // Let the fetches resolve
   const send = (message: unknown) => socket.onmessage({ data: JSON.stringify(message) });
-  return { window, document: window.document as Document, send };
+  return { window, document: window.document as Document, send, sent };
 }
 
 describe('Dashboard escapes outside data', () => {
@@ -484,5 +487,43 @@ describe('Database status badge', () => {
     assert.strictEqual(badge().text, 'Connected');
     assert.strictEqual(document.querySelectorAll('img').length, 0);
     assert.strictEqual(document.getElementById('db-status')!.title, '');
+  });
+});
+
+describe('Feed Listener switch', () => {
+  let window: any;
+  let document: Document;
+  let send: (message: unknown) => void;
+  let sent: unknown[];
+
+  before(async () => {
+    ({ window, document, send, sent } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+    send({ type: 'init', stats: { ...BASE_STATS, firehoseEnabled: false }, recentLabels: [] });
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('is on the Settings page, not the Overview page', () => {
+    const toggle = document.getElementById('firehose-switch')!;
+    assert.ok(document.getElementById('tab-settings')!.contains(toggle));
+    assert.strictEqual(document.getElementById('tab-overview')!.querySelector('.switch'), null);
+    assert.match(toggle.closest('.settings-card')!.textContent!, /Feed Listener/);
+  });
+
+  test('shows the saved setting from the server', () => {
+    assert.strictEqual((document.getElementById('firehose-switch') as HTMLInputElement).checked, false);
+  });
+
+  test('sends the new setting to the server when switched', () => {
+    const toggle = document.getElementById('firehose-switch') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new window.Event('change'));
+    assert.deepStrictEqual(sent.at(-1), { type: 'toggle', enabled: true });
   });
 });
