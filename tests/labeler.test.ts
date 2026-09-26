@@ -1,13 +1,22 @@
-import { test, describe, beforeEach, after } from 'node:test';
+import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
 import { formatLabel, signLabel } from 'labeler';
 import { issueLabelsForPost, recentLabels, activeAuthorSlugsSet, setLabelerServer, initLabelStoreGate, prepareLabelStore, labelStoreReady, LABELS_TABLE } from '../src/labeler.js';
 import { pool } from '../src/database.js';
-import { POST_ARTICLES_TABLE } from '../src/post-articles.js';
+import { POST_ARTICLES_TABLE, metricsPool } from '../src/post-articles.js';
 
 const TEST_KEY = new Uint8Array(32).fill(7);
 
 describe('Labeler Logic', () => {
+  // Metrics writes go nowhere unless a test captures them
+  const originalMetricsQuery = metricsPool.query;
+  before(() => {
+    metricsPool.query = (async () => ({ rows: [] })) as any;
+  });
+  after(() => {
+    metricsPool.query = originalMetricsQuery;
+  });
+
   beforeEach(() => {
     // Clear the memory history log before each test
     recentLabels.length = 0;
@@ -80,7 +89,7 @@ describe('Labeler Logic', () => {
   // Captures the post-articles inserts; answers everything else with no rows
   function capturePostArticleInserts() {
     const inserts: any[][] = [];
-    pool.query = (async (sql: string, params: any[]) => {
+    metricsPool.query = (async (sql: string, params: any[]) => {
       if (sql.includes(`INSERT INTO ${POST_ARTICLES_TABLE}`)) inserts.push(params);
       return { rows: [] };
     }) as any;
@@ -102,7 +111,7 @@ describe('Labeler Logic', () => {
   }
 
   test('should issue each label once, in order, when a post links several articles', async () => {
-    const originalQuery = pool.query;
+    const originalQuery = metricsPool.query;
     const inserts = capturePostArticleInserts();
     const created: string[] = [];
     setLabelerServer({
@@ -128,7 +137,7 @@ describe('Labeler Logic', () => {
         ],
       );
     } finally {
-      pool.query = originalQuery;
+      metricsPool.query = originalQuery;
       setLabelerServer(null);
     }
 
@@ -144,37 +153,37 @@ describe('Labeler Logic', () => {
   });
 
   test('should not record articles when publishing the labels fails', async () => {
-    const originalQuery = pool.query;
+    const originalQuery = metricsPool.query;
     const inserts = capturePostArticleInserts();
     setLabelerServer(signingServer([], true));
     try {
       await issueLabelsForPost('at://did:plc:mock/app.bsky.feed.post/failed', 'did:plc:author', 'A story',
         [{ id: 7, section: 'world', subsection: null, authors: [], title: 'Mock' }]);
     } finally {
-      pool.query = originalQuery;
+      metricsPool.query = originalQuery;
       setLabelerServer(null);
     }
     assert.deepStrictEqual(inserts, []);
   });
 
   test('should not record articles in dry-run mode', async () => {
-    const originalQuery = pool.query;
+    const originalQuery = metricsPool.query;
     const inserts = capturePostArticleInserts();
     try {
       await issueLabelsForPost('at://did:plc:mock/app.bsky.feed.post/dry', 'did:plc:author', 'A story',
         [{ id: 7, section: 'world', subsection: null, authors: [], title: 'Mock' }]);
     } finally {
-      pool.query = originalQuery;
+      metricsPool.query = originalQuery;
     }
     assert.strictEqual(recentLabels.length, 1);
     assert.deepStrictEqual(inserts, []);
   });
 
   test('should not wait for the articles to be recorded', async () => {
-    const originalQuery = pool.query;
+    const originalQuery = metricsPool.query;
     let started = false;
     // A metrics insert that never finishes, e.g. a locked table
-    pool.query = (() => {
+    metricsPool.query = (() => {
       started = true;
       return new Promise(() => {});
     }) as any;
@@ -189,7 +198,7 @@ describe('Labeler Logic', () => {
       ]);
       assert.strictEqual(outcome, 'done');
     } finally {
-      pool.query = originalQuery;
+      metricsPool.query = originalQuery;
       setLabelerServer(null);
     }
     assert.deepStrictEqual(created, ['world']);
@@ -197,11 +206,11 @@ describe('Labeler Logic', () => {
   });
 
   test('should still label a post when recording its articles fails', async () => {
-    const originalQuery = pool.query;
+    const originalQuery = metricsPool.query;
     const originalError = console.error;
     const errors: any[][] = [];
     console.error = (...args: any[]) => { errors.push(args); };
-    pool.query = (async () => { throw new Error('relation does not exist'); }) as any;
+    metricsPool.query = (async () => { throw new Error('relation does not exist'); }) as any;
     const created: string[] = [];
     setLabelerServer(signingServer(created));
     try {
@@ -209,7 +218,7 @@ describe('Labeler Logic', () => {
         [{ id: 7, section: 'world', subsection: 'europe', authors: [], title: 'Mock' }]);
       await new Promise((resolve) => setImmediate(resolve)); // The failure is logged after labeling returns
     } finally {
-      pool.query = originalQuery;
+      metricsPool.query = originalQuery;
       console.error = originalError;
       setLabelerServer(null);
     }
@@ -340,11 +349,11 @@ describe('Labeler Logic', () => {
   });
 
   test('should open the gate even if the post-articles table cannot be created', async () => {
-    const originalConnect = pool.connect;
+    const originalConnect = metricsPool.connect;
     const originalError = console.error;
     const errors: any[][] = [];
     console.error = (...args: any[]) => { errors.push(args); };
-    pool.connect = (async () => { throw new Error('permission denied for schema labeler'); }) as any;
+    metricsPool.connect = (async () => { throw new Error('permission denied for schema labeler'); }) as any;
     initLabelStoreGate();
     let opened = false;
     labelStoreReady.then(() => {
@@ -356,7 +365,7 @@ describe('Labeler Logic', () => {
       await prepareLabelStore();
       await new Promise((resolve) => setTimeout(resolve, 10));
     } finally {
-      pool.connect = originalConnect;
+      metricsPool.connect = originalConnect;
       console.error = originalError;
       setLabelerServer(null);
     }

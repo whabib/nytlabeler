@@ -1,5 +1,5 @@
-import { ENV } from './config.js';
-import { pool } from './database.js';
+import pg from 'pg';
+import { DATABASE_URL, ENV } from './config.js';
 
 /**
  * Postgres table recording which nytdata articles each labeled post linked, one per environment.
@@ -9,12 +9,35 @@ import { pool } from './database.js';
 export const POST_ARTICLES_TABLE = `labeler.post_articles_${ENV.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
 
 /**
+ * Settings for the metrics connection pool. Metrics writes get their own single connection
+ * and a statement timeout, so a slow or locked table can never take connections away from
+ * label writes and article lookups on the shared pool.
+ */
+export const METRICS_POOL_OPTIONS = {
+  max: 1,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  statement_timeout: 5000,
+};
+
+/** Writes waiting for the metrics connection beyond this are dropped rather than queued. */
+export const MAX_PENDING_WRITES = 100;
+
+export const metricsPool = new pg.Pool({ connectionString: DATABASE_URL, ...METRICS_POOL_OPTIONS });
+
+metricsPool.on('error', (err) => {
+  console.error('Unexpected error on idle metrics database client', err);
+});
+
+let pendingWrites = 0;
+
+/**
  * Creates the table if it doesn't exist. Instances can start at the same time, so the
  * creation runs under an advisory lock (concurrent CREATE ... IF NOT EXISTS can still fail).
  */
 export async function preparePostArticlesTable(): Promise<void> {
   const [schema, table] = POST_ARTICLES_TABLE.split('.');
-  const client = await pool.connect();
+  const client = await metricsPool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`nytlabeler:schema:${POST_ARTICLES_TABLE}`]);
@@ -41,13 +64,18 @@ export async function preparePostArticlesTable(): Promise<void> {
 
 /**
  * Records the articles a labeled post linked. Metrics only: a failure is logged and never
- * affects labeling.
+ * affects labeling, and when too many writes are already waiting the record is dropped.
  */
 export async function recordPostArticles(uri: string, authorDid: string, articleIds: number[]): Promise<void> {
   const ids = [...new Set(articleIds)];
   if (ids.length === 0) return;
+  if (pendingWrites >= MAX_PENDING_WRITES) {
+    console.warn('⚠️ Dropping articles for %s: %d metrics writes are already waiting.', uri, pendingWrites);
+    return;
+  }
+  pendingWrites++;
   try {
-    await pool.query(
+    await metricsPool.query(
       `INSERT INTO ${POST_ARTICLES_TABLE} (uri, author_did, article_id)
        SELECT $1, $2, unnest($3::int[])
        ON CONFLICT (uri, article_id) DO NOTHING`,
@@ -55,5 +83,7 @@ export async function recordPostArticles(uri: string, authorDid: string, article
     );
   } catch (error) {
     console.error('⚠️ Failed to record articles for %s:', uri, error);
+  } finally {
+    pendingWrites--;
   }
 }
