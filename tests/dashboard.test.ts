@@ -440,3 +440,49 @@ describe('Settings tab', () => {
     assert.strictEqual(dbHostField, null);
   });
 });
+
+describe('Database status badge', () => {
+  let window: any;
+  let document: Document;
+  let send: (message: unknown) => void;
+
+  before(async () => {
+    ({ window, document, send } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  function badge() {
+    const el = document.getElementById('db-status')!;
+    return { text: el.textContent!.trim(), classes: el.className, dot: el.querySelector('.status-dot')!.className };
+  }
+
+  test('says it is checking until the first result arrives', () => {
+    send({ type: 'init', stats: { ...BASE_STATS, database: null }, recentLabels: [] });
+    assert.deepStrictEqual(badge(), { text: 'Checking…', classes: 'db-status-badge checking', dot: 'status-dot yellow' });
+  });
+
+  test('shows a connected database with its round trip', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: true, latencyMs: 12.4, checkedAt: '2026-09-26T23:00:00.000Z' } } });
+    assert.deepStrictEqual(badge(), { text: 'Connected · 12 ms', classes: 'db-status-badge connected', dot: 'status-dot green' });
+    assert.match(document.getElementById('db-status')!.title, /^Last checked /);
+  });
+
+  test('shows an unreachable database in red', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: false, latencyMs: null, checkedAt: '2026-09-26T23:00:30.000Z' } } });
+    assert.deepStrictEqual(badge(), { text: 'Unreachable', classes: 'db-status-badge down', dot: 'status-dot red' });
+  });
+
+  test('never renders the latency as HTML', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: true, latencyMs: PAYLOAD, checkedAt: PAYLOAD } } });
+    assert.strictEqual(badge().text, 'Connected');
+    assert.strictEqual(document.querySelectorAll('img').length, 0);
+    assert.strictEqual(document.getElementById('db-status')!.title, '');
+  });
+});

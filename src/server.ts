@@ -9,6 +9,7 @@ import { getActiveAuthors, getDistinctCategories, saveSetting } from './database
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
 import { fetchPopularArticlesReport, REPORT_WINDOWS } from './reports.js';
+import { refreshDatabaseStatus, DB_CHECK_INTERVAL_MS } from './db-health.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -420,6 +421,10 @@ export async function refreshLabelActivity(): Promise<void> {
 }
 
 export function startWebServer() {
+  // The dashboard's database status, checked in every mode (article lookups use the database too)
+  void refreshDatabaseStatus();
+  setInterval(() => void refreshDatabaseStatus(), DB_CHECK_INTERVAL_MS).unref();
+
   // Without a LabelerServer (e.g. dry-run mode) there is no label table to read
   if (labelerServer) {
     // The label table exists once the startup gate opens

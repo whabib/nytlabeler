@@ -162,8 +162,31 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${hrs}:${mins}:${secs}`;
   }
 
+  // Database status from the server's periodic check (a null status means none has run yet)
+  function updateDbStatus(status) {
+    const badge = document.getElementById('db-status');
+    if (!badge) return;
+    let state = 'checking';
+    let text = 'Checking…';
+    if (status && status.connected === true) {
+      state = 'connected';
+      const latency = Number(status.latencyMs);
+      text = Number.isFinite(latency) ? `Connected · ${Math.round(latency)} ms` : 'Connected';
+    } else if (status && status.connected === false) {
+      state = 'down';
+      text = 'Unreachable';
+    }
+    const dot = { connected: 'green', down: 'red', checking: 'yellow' }[state];
+    badge.className = `db-status-badge ${state}`;
+    badge.innerHTML = `<span class="status-dot ${dot}"></span>`;
+    badge.append(` ${text}`);
+    const checkedAt = new Date(status?.checkedAt);
+    badge.title = Number.isNaN(checkedAt.getTime()) ? '' : `Last checked ${checkedAt.toLocaleTimeString()}`;
+  }
+
   // Populate dynamic DOM values
   function updateStats(stats) {
+    updateDbStatus(stats.database);
     if (processedEl) processedEl.textContent = stats.postsProcessed.toLocaleString();
     if (nytEl) nytEl.textContent = stats.nytLinksDetected.toLocaleString();
     // Label counts come from the database, so they include labels issued by any instance
