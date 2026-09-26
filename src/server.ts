@@ -8,6 +8,7 @@ import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } f
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
+import { fetchPopularArticlesReport, REPORT_WINDOWS } from './reports.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -352,6 +353,26 @@ app.get('/api/labels/recent', async (req, res) => {
     res.json(await fetchRecentPostLabels());
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch recent labels' });
+  }
+});
+
+// Most shared articles per period, for the Reports page
+app.get('/api/reports/popular-articles', async (req, res) => {
+  // Shares are only recorded alongside published labels, so dry-run mode has none
+  if (!labelerServer) {
+    res.json({
+      generatedAt: new Date().toISOString(),
+      windows: REPORT_WINDOWS.map(({ key, label }) => ({ key, label, articles: [] })),
+    });
+    return;
+  }
+  try {
+    // The table is created before the startup gate opens
+    await labelStoreReady;
+    res.json(await fetchPopularArticlesReport());
+  } catch (error) {
+    console.error('❌ Failed to build the popular articles report:', error);
+    res.status(500).json({ error: 'Failed to build the popular articles report' });
   }
 });
 

@@ -46,6 +46,8 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES } = await import('../src/server.js');
 const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
+const { metricsPool } = await import('../src/post-articles.js');
+const { resetReportCache } = await import('../src/reports.js');
 
 describe('WebSocket Protocol Proxy', () => {
   let mockTargetWss: WebSocketServer;
@@ -322,6 +324,51 @@ describe('WebSocket Protocol Proxy', () => {
       assert.strictEqual(failed.status, 500);
     } finally {
       pool.query = originalQuery;
+    }
+  }));
+
+  test('should serve the popular articles report', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    metricsPool.query = (async (_sql: string, params: any[]) => ({
+      rows: params[0] === '1 hour'
+        ? [{ id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', authors: ['Zoe Writer'], shares: 2 }]
+        : [],
+    })) as any;
+    resetReportCache();
+    try {
+      const res = await fetch('http://127.0.0.1:14100/api/reports/popular-articles');
+      assert.strictEqual(res.status, 200);
+      const report = await res.json();
+      assert.deepStrictEqual(report.windows.map((w: any) => w.label), ['Last Hour', 'Last 8 Hours', 'Last 24 Hours', 'Last 7 Days']);
+      assert.deepStrictEqual(report.windows[0].articles, [
+        { id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', authors: ['Zoe Writer'], shares: 2 },
+      ]);
+
+      metricsPool.query = (async () => { throw new Error('statement timeout'); }) as any;
+      resetReportCache();
+      const failed = await fetch('http://127.0.0.1:14100/api/reports/popular-articles');
+      assert.strictEqual(failed.status, 500);
+    } finally {
+      metricsPool.query = originalQuery;
+      resetReportCache();
+    }
+  }));
+
+  test('should return empty reports without a LabelerServer (dry-run)', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    let queried = false;
+    metricsPool.query = (async () => { queried = true; return { rows: [] }; }) as any;
+    setLabelerServer(null);
+    try {
+      const res = await fetch('http://127.0.0.1:14100/api/reports/popular-articles');
+      assert.strictEqual(res.status, 200);
+      const report = await res.json();
+      assert.strictEqual(report.windows.length, 4);
+      assert.ok(report.windows.every((w: any) => w.articles.length === 0));
+      assert.strictEqual(queried, false, 'No share table exists in dry-run mode');
+    } finally {
+      metricsPool.query = originalQuery;
+      setLabelerServer({ mock: true });
     }
   }));
 

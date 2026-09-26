@@ -28,7 +28,12 @@ async function loadDashboard(responses: Record<string, unknown>) {
   });
   const window: any = dom.window;
   let socket: any;
-  window.fetch = async (url: string) => ({ ok: true, json: async () => responses[url] });
+  // An Error stands for a failed request (HTTP 500)
+  window.fetch = async (url: string) => {
+    const response = responses[url];
+    if (response instanceof Error) return { ok: false, status: 500, json: async () => ({ error: response.message }) };
+    return { ok: true, json: async () => response };
+  };
   window.WebSocket = class {
     static OPEN = 1;
     readyState = 0;
@@ -272,4 +277,117 @@ describe('Bluesky post links in the history', () => {
       assert.strictEqual(row.querySelectorAll('[onmouseover]').length, 0);
     });
   }
+});
+
+describe('Reports page', () => {
+  let window: any;
+  let document: Document;
+  const responses: Record<string, unknown> = {
+    '/api/authors': [],
+    '/api/categories': { sections: [], subsections: [] },
+    '/api/stats': { env: 'development', dryRun: false },
+  };
+  const report = {
+    generatedAt: '2026-09-26T18:30:00.000Z',
+    windows: [
+      {
+        key: '1h',
+        label: 'Last Hour',
+        articles: [
+          { id: 1, title: 'U.S. Rejects U.N. Declaration', url: 'https://www.nytimes.com/2026/09/26/us/un.html', authors: ['Adam Author', 'Zoe Writer'], shares: 4 },
+          { id: 2, title: null, url: 'https://www.nytimes.com/2026/09/26/arts/untitled.html', authors: [], shares: 1 },
+        ],
+      },
+      {
+        key: '8h',
+        label: 'Last 8 Hours',
+        articles: [
+          // Outside data at every position: title, authors, and URLs trying to break out or run script
+          { id: 3, title: PAYLOAD, url: `https://www.nytimes.com/${ATTRIBUTE_BREAKOUT}`, authors: [PAYLOAD], shares: 3 },
+          { id: 4, title: 'Script link', url: 'javascript:window.__xss = true', authors: ['A'], shares: PAYLOAD },
+        ],
+      },
+      { key: '24h', label: 'Last 24 Hours', articles: [] },
+      { key: '7d', label: 'Last 7 Days', articles: [] },
+    ],
+  };
+
+  function openReports() {
+    (document.querySelector('.nav-item[data-tab="reports"]') as HTMLElement).click();
+    return new Promise((resolve) => setTimeout(resolve, 20)); // Let the fetch resolve
+  }
+
+  before(async () => {
+    responses['/api/reports/popular-articles'] = report;
+    ({ window, document } = await loadDashboard(responses));
+    await openReports();
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('adds Reports to the sidebar and shows its page when clicked', () => {
+    const nav = document.querySelector('.nav-item[data-tab="reports"]')!;
+    assert.match(nav.textContent!, /Reports/);
+    assert.ok(nav.classList.contains('active'));
+    assert.ok(document.getElementById('tab-reports')!.classList.contains('active'));
+    assert.ok(!document.getElementById('tab-overview')!.classList.contains('active'));
+  });
+
+  test('shows one table per period, in order', () => {
+    const headings = [...document.querySelectorAll('#reports-list .report-card h3')].map((h) => h.textContent);
+    assert.deepStrictEqual(headings, [
+      'Most Popular Shared Posts in the Last Hour',
+      'Most Popular Shared Posts in the Last 8 Hours',
+      'Most Popular Shared Posts in the Last 24 Hours',
+      'Most Popular Shared Posts in the Last 7 Days',
+    ]);
+    const columns = [...document.querySelectorAll('#reports-list .report-card')[0].querySelectorAll('th')].map((th) => th.textContent);
+    assert.deepStrictEqual(columns, ['Article', 'Authors', 'Times Shared']);
+  });
+
+  test('links each title to its article, with its authors and share count', () => {
+    const rows = [...document.querySelectorAll('[data-report="1h"] tbody tr')];
+    const cells = rows.map((row) => [...row.querySelectorAll('td')].map((td) => td.textContent!.trim()));
+    assert.deepStrictEqual(cells, [
+      ['U.S. Rejects U.N. Declaration', 'Adam Author, Zoe Writer', '4'],
+      // No title: the URL stands in; no authors: a dash
+      ['https://www.nytimes.com/2026/09/26/arts/untitled.html', '—', '1'],
+    ]);
+    const link = rows[0].querySelector('a')!;
+    assert.strictEqual(link.getAttribute('href'), 'https://www.nytimes.com/2026/09/26/us/un.html');
+    assert.strictEqual(link.getAttribute('target'), '_blank');
+    assert.strictEqual(link.getAttribute('rel'), 'noopener noreferrer');
+  });
+
+  test('shows an empty state for a period with no shares', () => {
+    const cell = document.querySelector('[data-report="24h"] tbody td')!;
+    assert.strictEqual(cell.textContent, 'No shares recorded in this period yet.');
+  });
+
+  test('renders titles, authors and URLs from the database as text, never as HTML or script', () => {
+    assert.strictEqual(document.querySelectorAll('img').length, 0);
+    assert.strictEqual(document.querySelectorAll('[onerror], [onmouseover]').length, 0);
+    assert.strictEqual(window.__xss, undefined);
+
+    const [payloadRow, scriptRow] = [...document.querySelectorAll('[data-report="8h"] tbody tr')];
+    assert.strictEqual(payloadRow.querySelector('a')!.textContent, PAYLOAD);
+    assert.strictEqual(payloadRow.querySelector('a')!.getAttribute('href'), `https://www.nytimes.com/${ATTRIBUTE_BREAKOUT}`);
+    assert.strictEqual(payloadRow.querySelector('.report-authors')!.textContent, PAYLOAD);
+    // A non-web URL gets no link, and a non-numeric count shows as 0
+    assert.strictEqual(scriptRow.querySelector('a'), null);
+    assert.strictEqual(scriptRow.querySelector('.report-shares')!.textContent, '0');
+  });
+
+  test('shows an error when the report fails, and Refresh loads it again', async () => {
+    responses['/api/reports/popular-articles'] = new Error('Failed to build the popular articles report');
+    await openReports();
+    assert.match(document.getElementById('reports-list')!.textContent!, /Couldn't load reports/);
+
+    responses['/api/reports/popular-articles'] = report;
+    (document.getElementById('reports-refresh') as HTMLElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.strictEqual(document.querySelectorAll('#reports-list .report-card').length, 4);
+  });
 });

@@ -933,3 +933,63 @@ input:disabled + .slider {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Reports */
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.report-card h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 20px 16px 4px;
+}
+
+.report-card .history-table {
+  table-layout: fixed;
+}
+
+/* The same column widths in every report, so the tables line up */
+.report-card th:nth-child(1) {
+  width: 55%;
+}
+
+.report-card th:nth-child(2) {
+  width: 30%;
+}
+
+.report-card .article-title-cell {
+  max-width: none;
+  overflow-wrap: anywhere;
+}
+
+.report-article-link {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.report-article-link:hover {
+  color: var(--neon-purple);
+  text-decoration: underline;
+}
+
+.report-authors {
+  color: var(--text-secondary);
+}
+
+.history-table .report-shares {
+  font-family: 'JetBrains Mono', monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.reports-updated {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-right: 12px;
+  white-space: nowrap;
+}

@@ -23,6 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
           pane.classList.remove('active');
         }
       });
+
+      // Reports are loaded when opened, so they're current each time
+      if (activeTab === 'reports') loadReports();
     });
   });
 
@@ -351,6 +354,67 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!DID_PATTERNS.some((pattern) => pattern.test(String(did ?? '')))) return null;
     if (!RECORD_KEY_PATTERN.test(recordKey) || recordKey === '.' || recordKey === '..') return null;
     return `https://bsky.app/profile/${did}/post/${recordKey}`;
+  }
+
+  // Reports: the most shared articles per period, from /api/reports/popular-articles
+  document.getElementById('reports-refresh')?.addEventListener('click', () => loadReports());
+
+  async function loadReports() {
+    const list = document.getElementById('reports-list');
+    if (!list) return;
+    if (!list.children.length) list.innerHTML = '<div class="empty-state">Loading reports…</div>';
+    try {
+      const res = await fetch('/api/reports/popular-articles');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      renderReports(await res.json());
+    } catch (err) {
+      console.error('Failed to load reports:', err);
+      list.innerHTML = '<div class="empty-state">Couldn\'t load reports. Try Refresh.</div>';
+    }
+  }
+
+  function renderReports(report) {
+    const list = document.getElementById('reports-list');
+    const windows = Array.isArray(report?.windows) ? report.windows : [];
+    list.innerHTML = windows.map((period) => {
+      const articles = Array.isArray(period.articles) ? period.articles : [];
+      const rows = articles.length
+        ? articles.map((article) => {
+            const title = escapeHtml(article.title || article.url);
+            // Link only to web pages: an article URL from the database can't become a script link
+            const titleHtml = /^https?:\/\//i.test(String(article.url ?? ''))
+              ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener noreferrer" class="report-article-link">${title}</a>`
+              : title;
+            const authors = Array.isArray(article.authors) && article.authors.length
+              ? article.authors.map(escapeHtml).join(', ')
+              : '—';
+            return `
+              <tr>
+                <td class="article-title-cell">${titleHtml}</td>
+                <td class="report-authors">${authors}</td>
+                <td class="report-shares">${Number(article.shares) || 0}</td>
+              </tr>`;
+          }).join('')
+        : '<tr><td colspan="3" class="empty-state">No shares recorded in this period yet.</td></tr>';
+      return `
+        <div class="report-card glass history-table-container" data-report="${escapeHtml(period.key)}">
+          <h3>Most Popular Shared Posts in the ${escapeHtml(period.label)}</h3>
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th>Authors</th>
+                <th class="report-shares">Times Shared</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    const updated = document.getElementById('reports-updated');
+    const generatedAt = new Date(report?.generatedAt);
+    if (updated) updated.textContent = Number.isNaN(generatedAt.getTime()) ? '' : `Updated ${generatedAt.toLocaleTimeString()}`;
   }
 
   // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML
