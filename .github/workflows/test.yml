@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - master
+  # Also run by the deploy workflow on the release being deployed
+  workflow_call:
 
 # The tests only need to read the repository
 permissions:

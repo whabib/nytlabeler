@@ -1,0 +1,122 @@
+name: Deploy to dev on release
+
+# Publishing a GitHub release (e.g. tag 1.2.0) runs the tests on the tagged commit, then
+# deploys it to nyt-labeler-dev with the same command as a manual deploy:
+#   ./deploy.sh --env dev --direct-vpc default
+# To redeploy a release by hand, run this workflow from the Actions tab and pick the release
+# tag (not a branch) under "Use workflow from".
+#
+# One-time setup (Google Cloud and the "dev" GitHub environment) is in the README under
+# "Deploying on release (GitHub Actions)".
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer release waits for the running deploy instead of cancelling it
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test the release
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    name: Deploy to nyt-labeler-dev
+    needs: test
+    runs-on: ubuntu-latest
+    # Google Cloud only trusts jobs in this environment (see the README setup)
+    environment:
+      name: dev
+      url: https://nyt-labeler-dev.warren.nyc
+    permissions:
+      contents: read
+      id-token: write # Sign in to Google Cloud with Workload Identity Federation (no stored key)
+    env:
+      CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
+
+    steps:
+      - name: Only deploy release tags
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::Deploys run from a release tag. Under 'Use workflow from', pick a tag such as 1.2.0, not a branch."
+          exit 1
+
+      - name: Checkout the release
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check the release is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main. Only merged code is deployed."
+            exit 1
+          fi
+
+      - name: Check the deploy settings
+        env:
+          WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          BSKY_DID: ${{ vars.BSKY_DID }}
+          BSKY_IDENTIFIER: ${{ vars.BSKY_IDENTIFIER }}
+        run: |
+          missing=""
+          for name in WORKLOAD_IDENTITY_PROVIDER DEPLOY_SERVICE_ACCOUNT BSKY_DID BSKY_IDENTIFIER; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing variables in the 'dev' environment:$missing (see the README setup)"
+            exit 1
+          fi
+
+      - name: Sign in to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          install_components: beta # deploy.sh uses "gcloud beta" for the domain mapping
+
+      # deploy.sh reads these from a local .env. None are secret: the signing key, password
+      # and database URL come from Secret Manager at runtime.
+      - name: Write the deploy settings
+        env:
+          BSKY_DID: ${{ vars.BSKY_DID }}
+          BSKY_IDENTIFIER: ${{ vars.BSKY_IDENTIFIER }}
+          FIREHOSE_URL: ${{ vars.FIREHOSE_URL }}
+          WANTED_COLLECTION: ${{ vars.WANTED_COLLECTION }}
+        run: |
+          {
+            echo "BSKY_DID=${BSKY_DID}"
+            echo "BSKY_IDENTIFIER=${BSKY_IDENTIFIER}"
+            if [ -n "$FIREHOSE_URL" ]; then echo "FIREHOSE_URL=${FIREHOSE_URL}"; fi
+            if [ -n "$WANTED_COLLECTION" ]; then echo "WANTED_COLLECTION=${WANTED_COLLECTION}"; fi
+          } > .env
+
+      - name: Deploy
+        run: ./deploy.sh --env dev --direct-vpc default
+
+      - name: Check the service responds
+        run: |
+          revision=$(gcloud run services describe nyt-labeler-dev --region us-central1 --project pointless-enterprises \
+            --format='value(status.latestReadyRevisionName)')
+          health=$(curl -fsS --retry 5 --retry-delay 10 --retry-all-errors https://nyt-labeler-dev.warren.nyc/xrpc/_health)
+          echo "Serving ${revision}: ${health}"
+          {
+            echo "### Deployed ${GITHUB_REF_NAME} to nyt-labeler-dev"
+            echo ""
+            echo "- Revision: \`${revision}\`"
+            echo "- Health: \`${health}\`"
+            echo "- The previous revision keeps firehose leadership until its subscribers disconnect (up to 30 minutes)."
+          } >> "$GITHUB_STEP_SUMMARY"

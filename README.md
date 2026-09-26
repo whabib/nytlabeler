@@ -208,6 +208,70 @@ To maximize security, sensitive environment credentials are retrieved dynamicall
   - **Serverless VPC Access**: Use `--vpc-connector <connector_name>`
   - **Cloud SQL Auth Proxy fallback**: If neither network option is specified, the script automatically mounts the Cloud SQL Auth proxy instance (`--add-cloudsql-instances`) as a fallback integration, resolving sockets securely.
 
+### 4. Deploying on release (GitHub Actions)
+
+`.github/workflows/deploy-dev.yml` deploys to **nyt-labeler-dev** when a GitHub release is published (e.g. tag `1.2.0`):
+
+1. It runs the test suite on the tagged commit.
+2. It checks that the tag is on `main`.
+3. It runs the same command as a manual deploy: `./deploy.sh --env dev --direct-vpc default`.
+4. It checks that the service responds.
+
+To redeploy a release, run the workflow from the Actions tab and pick the release **tag** under "Use workflow from".
+
+GitHub stores no key or secret for this. The job signs in with [Workload Identity Federation](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account), and Google Cloud trusts only jobs in this repository's `dev` environment. The signing key, Bluesky password and database URL stay in Secret Manager, as with a manual deploy.
+
+**One-time setup in Google Cloud** (as a project owner):
+
+```bash
+PROJECT_ID=pointless-enterprises
+PROJECT_NUMBER=506551886695
+SA=github-deployer@${PROJECT_ID}.iam.gserviceaccount.com
+
+# A pool and provider that accept GitHub's tokens for this repository only
+gcloud iam workload-identity-pools create github --project=$PROJECT_ID --location=global \
+  --display-name="GitHub Actions"
+gcloud iam workload-identity-pools providers create-oidc nytlabeler --project=$PROJECT_ID \
+  --location=global --workload-identity-pool=github --display-name="whabib/nytlabeler" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == 'whabib/nytlabeler'"
+
+# The account deploys run as
+gcloud iam service-accounts create github-deployer --project=$PROJECT_ID \
+  --display-name="GitHub Actions deployer (nytlabeler)"
+
+# Only jobs in the repository's "dev" environment may use it
+gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT_ID \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/subject/repo:whabib/nytlabeler:environment:dev"
+
+# What deploy.sh needs: deploy Cloud Run services and jobs, run Cloud Build (roles/viewer
+# lets gcloud stream the build log), upload the source, and run things as the runtime account
+for role in roles/run.admin roles/cloudbuild.builds.editor roles/viewer roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:$SA" --role=$role --condition=None
+done
+gcloud storage buckets add-iam-policy-binding gs://${PROJECT_ID}_cloudbuild \
+  --member="serviceAccount:$SA" --role=roles/storage.admin
+gcloud iam service-accounts add-iam-policy-binding ${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+  --project=$PROJECT_ID --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser
+```
+
+**One-time setup in GitHub:** create the `dev` environment and its variables. None of these are secret:
+
+```bash
+gh api -X PUT repos/whabib/nytlabeler/environments/dev
+gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER --env dev \
+  --body "projects/506551886695/locations/global/workloadIdentityPools/github/providers/nytlabeler"
+gh variable set GCP_DEPLOY_SERVICE_ACCOUNT --env dev --body "github-deployer@pointless-enterprises.iam.gserviceaccount.com"
+gh variable set BSKY_DID --env dev --body "did:plc:diitczh77g62vvea5fjbbz6b"
+gh variable set BSKY_IDENTIFIER --env dev --body "nyt-labeler-dev.bsky.social"
+gh variable set FIREHOSE_URL --env dev --body "wss://jetstream1.us-east.bsky.network/subscribe"
+gh variable set WANTED_COLLECTION --env dev --body "app.bsky.feed.post"
+```
+
+Optionally, in **Settings → Environments → dev**, limit deployments to tags (for example the pattern `*.*.*`) or add yourself as a required reviewer, so each deploy waits for your approval.
+
 ---
 
 ## 📁 Repository Exclusion Configuration
@@ -225,3 +289,5 @@ We have configured an automated continuous integration workflow inside `.github/
 * Sets up Node.js 24 environment on `ubuntu-latest`.
 * Automatically installs workspace dependencies cleanly (`npm ci`).
 * Executes the full unit test suite (`npm run test`) to verify all URL normalization, slugification, and label filtering assertions pass successfully before merge.
+
+The deploy workflow (`.github/workflows/deploy-dev.yml`, see [Deploying on release](#4-deploying-on-release-github-actions)) calls the same test workflow on each release before deploying it.
