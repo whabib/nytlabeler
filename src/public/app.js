@@ -80,7 +80,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const setHandle = document.getElementById('set-handle');
   const setUrl = document.getElementById('set-url');
   const setDid = document.getElementById('set-did');
-  const setDbHost = document.getElementById('set-db-host');
   const setDbName = document.getElementById('set-db-name');
 
   // Initialize Canvas Chart
@@ -494,13 +493,29 @@ document.addEventListener('DOMContentLoaded', () => {
         else dryRunBannerEl.classList.add('hidden');
       }
 
-      if (setHandle) setHandle.value = config.dryRun ? 'nyt-labeler-dev.bsky.social (Dry-Run)' : (config.bskyIdentifier || 'Unknown Handle');
+      if (setHandle) showHandle(setHandle, config);
       if (setUrl) setUrl.value = config.serviceUrl;
       if (setDid) setDid.value = config.did || 'dry_run_unbound_did';
-      if (setDbHost) setDbHost.value = config.dbHost || 'localhost';
       if (setDbName) setDbName.value = config.dbName || 'nytdata';
     } catch (err) {
       console.error('Failed to load system config:', err);
+    }
+  }
+
+  // Bluesky handles are domain names (e.g. nyt-labeler-dev.bsky.social)
+  const HANDLE_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+  // Shows the labeler's handle, linked to its bsky.app profile when it's a real handle
+  function showHandle(element, config) {
+    const handle = config.dryRun ? null : config.bskyIdentifier;
+    if (handle && HANDLE_PATTERN.test(handle)) {
+      element.textContent = handle;
+      element.href = `https://bsky.app/profile/${handle}`;
+      element.title = 'Open this account on Bluesky';
+    } else {
+      element.textContent = config.dryRun ? 'nyt-labeler-dev.bsky.social (Dry-Run)' : (handle || 'Unknown Handle');
+      element.removeAttribute('href');
+      element.removeAttribute('title');
     }
   }
 

@@ -391,3 +391,52 @@ describe('Reports page', () => {
     assert.strictEqual(document.querySelectorAll('#reports-list .report-card').length, 4);
   });
 });
+
+describe('Settings tab', () => {
+  async function settingsFor(stats: Record<string, unknown>) {
+    const { window, document } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', did: 'did:plc:diitczh77g62vvea5fjbbz6b', serviceUrl: 'https://example.test', ...stats },
+    });
+    const handle = document.getElementById('set-handle')!;
+    const result = { tag: handle.tagName, text: handle.textContent, href: handle.getAttribute('href'), target: handle.getAttribute('target'), rel: handle.getAttribute('rel') };
+    const dbHostField = document.getElementById('set-db-host');
+    window.close();
+    return { ...result, dbHostField };
+  }
+
+  test('links the active handle to its Bluesky profile in a new tab', async () => {
+    const handle = await settingsFor({ dryRun: false, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.deepStrictEqual(handle, {
+      tag: 'A',
+      text: 'nyt-labeler-dev.bsky.social',
+      href: 'https://bsky.app/profile/nyt-labeler-dev.bsky.social',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      dbHostField: null,
+    });
+  });
+
+  test('shows no link in dry-run mode, or for a value that is not a handle', async () => {
+    const dryRun = await settingsFor({ dryRun: true, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.strictEqual(dryRun.href, null);
+    assert.strictEqual(dryRun.text, 'nyt-labeler-dev.bsky.social (Dry-Run)');
+
+    const missing = await settingsFor({ dryRun: false });
+    assert.strictEqual(missing.href, null);
+    assert.strictEqual(missing.text, 'Unknown Handle');
+
+    // Anything else is shown as plain text, never as a link or HTML
+    for (const value of [PAYLOAD, ATTRIBUTE_BREAKOUT, 'javascript:alert(1)', 'user@example.com']) {
+      const handle = await settingsFor({ dryRun: false, bskyIdentifier: value });
+      assert.strictEqual(handle.href, null, `No link for ${value}`);
+      assert.strictEqual(handle.text, value);
+    }
+  });
+
+  test('no longer shows a database host field', async () => {
+    const { dbHostField } = await settingsFor({ dryRun: false, bskyIdentifier: 'nyt-labeler-dev.bsky.social' });
+    assert.strictEqual(dbHostField, null);
+  });
+});

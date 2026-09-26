@@ -296,7 +296,8 @@
             <div class="settings-form">
               <div class="form-group">
                 <label>Active Handle</label>
-                <input type="text" id="set-handle" class="glass-input" readonly>
+                <!-- Links to the account on bsky.app once the handle loads -->
+                <a id="set-handle" class="glass-input handle-link" target="_blank" rel="noopener noreferrer"></a>
               </div>
               <div class="form-group">
                 <label>Service URL (DID Root)</label>
@@ -313,10 +314,6 @@
           <div class="settings-card glass">
             <h3>🗄️ PostgreSQL Database</h3>
             <div class="settings-form">
-              <div class="form-group">
-                <label>Host IP / Address</label>
-                <input type="text" id="set-db-host" class="glass-input" readonly>
-              </div>
               <div class="form-group">
                 <label>Database Name</label>
                 <input type="text" id="set-db-name" class="glass-input" readonly>
