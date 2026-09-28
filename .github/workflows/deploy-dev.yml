@@ -42,6 +42,9 @@ jobs:
       CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
 
     steps:
+      # A clear message for a run started from a branch. This isn't what protects the deploy:
+      # a workflow file can be edited, so Google Cloud (tag runs in the dev environment only),
+      # the dev environment (tags only) and the "Release tags" ruleset (admins only) enforce it.
       - name: Only deploy release tags
         if: github.ref_type != 'tag'
         run: |

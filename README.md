@@ -219,7 +219,17 @@ To maximize security, sensitive environment credentials are retrieved dynamicall
 
 To redeploy a release, run the workflow from the Actions tab and pick the release **tag** under "Use workflow from".
 
-GitHub stores no key or secret for this. The job signs in with [Workload Identity Federation](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account), and Google Cloud trusts only jobs in this repository's `dev` environment. The signing key, Bluesky password and database URL stay in Secret Manager, as with a manual deploy.
+GitHub stores no key or secret for this. The job signs in with [Workload Identity Federation](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account). The signing key, Bluesky password and database URL stay in Secret Manager, as with a manual deploy.
+
+**What stops other code from deploying.** Anyone who can push could write their own workflow, so the workflow's own checks aren't what protects the deploy account. These three layers are, and each is enforced outside the workflow file:
+
+1. **Google Cloud** issues tokens only to runs of this repository from a **tag**, and only to jobs in the **`dev` environment**.
+2. **The `dev` environment** accepts deployments only from tags matching `*.*.*`, so GitHub blocks any branch run before it starts.
+3. **The "Release tags" ruleset** lets only repository admins create, move or delete `*.*.*` tags, so nobody else can make a tag that passes 1 and 2.
+
+To also approve each deploy by hand, add yourself as a required reviewer under **Settings → Environments → dev**.
+
+This setup was done on 2026-09-28. The commands below are kept as a record, and for setting it up again.
 
 **One-time setup in Google Cloud** (as a project owner):
 
@@ -228,18 +238,22 @@ PROJECT_ID=pointless-enterprises
 PROJECT_NUMBER=506551886695
 SA=github-deployer@${PROJECT_ID}.iam.gserviceaccount.com
 
-# A pool and provider that accept GitHub's tokens for this repository only
+# Security Token Service, which exchanges GitHub's token for a Google one
+gcloud services enable sts.googleapis.com --project=$PROJECT_ID
+
+# A pool and provider that accept GitHub's tokens only for tag runs of this repository
 gcloud iam workload-identity-pools create github --project=$PROJECT_ID --location=global \
   --display-name="GitHub Actions"
 gcloud iam workload-identity-pools providers create-oidc nytlabeler --project=$PROJECT_ID \
   --location=global --workload-identity-pool=github --display-name="whabib/nytlabeler" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository == 'whabib/nytlabeler'"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref_type=assertion.ref_type" \
+  --attribute-condition="assertion.repository == 'whabib/nytlabeler' && assertion.ref_type == 'tag'"
 
 # The account deploys run as
 gcloud iam service-accounts create github-deployer --project=$PROJECT_ID \
-  --display-name="GitHub Actions deployer (nytlabeler)"
+  --display-name="GitHub Actions deployer (nytlabeler)" \
+  --description="Deploys nyt-labeler-dev from release tags via .github/workflows/deploy-dev.yml"
 
 # Only jobs in the repository's "dev" environment may use it
 gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT_ID \
@@ -257,10 +271,15 @@ gcloud iam service-accounts add-iam-policy-binding ${PROJECT_NUMBER}-compute@dev
   --project=$PROJECT_ID --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser
 ```
 
-**One-time setup in GitHub:** create the `dev` environment and its variables. None of these are secret:
+**One-time setup in GitHub:** create the `dev` environment (tags only), its variables and the tag ruleset. None of the variables are secret:
 
 ```bash
-gh api -X PUT repos/whabib/nytlabeler/environments/dev
+# The dev environment, accepting deployments from release tags only
+gh api -X PUT repos/whabib/nytlabeler/environments/dev \
+  --input - <<< '{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}'
+gh api -X POST repos/whabib/nytlabeler/environments/dev/deployment-branch-policies -f name='*.*.*' -f type=tag
+
+# What deploy.sh reads from .env
 gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER --env dev \
   --body "projects/506551886695/locations/global/workloadIdentityPools/github/providers/nytlabeler"
 gh variable set GCP_DEPLOY_SERVICE_ACCOUNT --env dev --body "github-deployer@pointless-enterprises.iam.gserviceaccount.com"
@@ -268,9 +287,19 @@ gh variable set BSKY_DID --env dev --body "did:plc:diitczh77g62vvea5fjbbz6b"
 gh variable set BSKY_IDENTIFIER --env dev --body "nyt-labeler-dev.bsky.social"
 gh variable set FIREHOSE_URL --env dev --body "wss://jetstream1.us-east.bsky.network/subscribe"
 gh variable set WANTED_COLLECTION --env dev --body "app.bsky.feed.post"
-```
 
-Optionally, in **Settings → Environments → dev**, limit deployments to tags (for example the pattern `*.*.*`) or add yourself as a required reviewer, so each deploy waits for your approval.
+# Only admins (actor 5 is the Admin repository role) may create, move or delete release tags
+gh api -X POST repos/whabib/nytlabeler/rulesets --input - <<'JSON'
+{
+  "name": "Release tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/*.*.*"], "exclude": [] } },
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ],
+  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ]
+}
+JSON
+```
 
 ---
 
