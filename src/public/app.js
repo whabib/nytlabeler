@@ -430,8 +430,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // scope: 'shared' (articles shared since recording began) or 'all' (every article nytdata has)
   const authorsView = { author: null, articles: [], sort: { key: 'shares', dir: 'desc' }, scope: 'shared' };
   const AUTHOR_DESCRIPTIONS = {
-    shared: 'Authors of the NYT articles linked in labeled Bluesky posts, since recording began on September 26, 2026. An article with several authors counts for each of them.',
-    all: 'Every author in nytdata, with all of their articles. Shares are counted since recording began on September 26, 2026, so earlier articles show 0. An article with several authors counts for each of them.',
+    shared: 'Authors with their own label, and how often their articles were linked in labeled Bluesky posts since recording began on September 26, 2026. An article with several authors counts for each of them.',
+    all: 'Every author with their own label, with all of their articles. Shares are counted since recording began on September 26, 2026, so earlier articles show 0. An article with several authors counts for each of them.',
   };
   const scopeQuery = () => (authorsView.scope === 'all' ? '?scope=all' : '');
 

@@ -1,7 +1,7 @@
 import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import pg from 'pg';
-import { pool } from '../src/database.js';
+import { pool, getActiveAuthors } from '../src/database.js';
 import { metricsPool, POST_ARTICLES_TABLE } from '../src/post-articles.js';
 import {
   fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, resetReportCache, REPORT_WINDOWS, REPORT_LIMIT, REPORT_CACHE_MS,
@@ -92,6 +92,17 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (1, 1), (1, 2), (2, 1);
       INSERT INTO "Author" (id, name) VALUES (3, 'Nobody Shared');
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (5, 1), (6, 3);
+      -- Who gets a label: 2+ opinion articles (Zoe: 2 and 5; Unshared Columnist: 7 and 8), or
+      -- 2+ US politics articles (Adam: 1 and 9, in mixed case). Staff Reporter has shares
+      -- (article 3) but no label; Nobody Shared has neither.
+      UPDATE "Article" SET subsection = 'politics' WHERE id = 1;
+      UPDATE "Article" SET section = 'opinion' WHERE id = 5;
+      INSERT INTO "Article" (id, url, section, subsection, title, date_created) VALUES
+        (7, 'https://www.nytimes.com/seven.html', 'opinion', NULL, 'Seven', '2026-09-15 12:00:00'),
+        (8, 'https://www.nytimes.com/eight.html', 'opinion', NULL, 'Eight', '2026-09-16 12:00:00'),
+        (9, 'https://www.nytimes.com/nine.html', 'US', 'Politics', 'Nine', '2026-09-17 12:00:00');
+      INSERT INTO "Author" (id, name) VALUES (4, 'Unshared Columnist'), (5, 'Staff Reporter');
+      INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (7, 4), (8, 4), (9, 2), (3, 5);
     `);
     // Shares at different ages: article 1 is recent, article 2 older, article 3 only last week
     const shares: [number, string][] = [
@@ -141,10 +152,10 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
     assert.deepStrictEqual([four.authors, four.url], [[], 'https://www.nytimes.com/four.html']);
   });
 
-  test('lists every author with a shared article, most shared first', async () => {
+  test('lists the label authors with a shared article, most shared first', async () => {
     const report = await fetchAuthorsReport();
-    // Article 1 (Adam and Zoe) was shared 4 times in all, article 2 (Zoe) 3 times; articles
-    // 3 and 4 have no authors, and an author with no shared articles isn't listed
+    // Article 1 (Adam and Zoe) was shared 4 times in all, article 2 (Zoe) 3 times. Staff
+    // Reporter's article 3 was shared most, but they don't get a label
     assert.deepStrictEqual(report.authors, [
       { id: 1, name: 'Zoe Writer', articles: 2, shares: 7 },
       { id: 2, name: 'Adam Author', articles: 1, shares: 4 },
@@ -166,14 +177,16 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
     assert.deepStrictEqual([unshared!.author.name, unshared!.articles], ['Nobody Shared', []]);
   });
 
-  test('with every article, lists all authors and counts all of their articles', async () => {
+  test('with every article, lists all label authors and counts all of their articles', async () => {
     const report = await fetchAuthorsReport('all');
     assert.strictEqual(report.scope, 'all');
     assert.deepStrictEqual(report.authors, [
       { id: 1, name: 'Zoe Writer', articles: 3, shares: 7 }, // Articles 1, 2 and the unshared 5
-      { id: 2, name: 'Adam Author', articles: 1, shares: 4 },
-      { id: 3, name: 'Nobody Shared', articles: 1, shares: 0 },
+      { id: 2, name: 'Adam Author', articles: 2, shares: 4 }, // Articles 1 and the unshared 9
+      { id: 4, name: 'Unshared Columnist', articles: 2, shares: 0 },
     ]);
+    // Authors without a label are never listed, shared or not
+    assert.ok(!report.authors.some((author) => ['Staff Reporter', 'Nobody Shared'].includes(author.name)));
     // The default is unchanged
     assert.deepStrictEqual((await fetchAuthorsReport()).authors.map((a) => a.name), ['Zoe Writer', 'Adam Author']);
   });
@@ -187,5 +200,17 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
     ]);
     const nobody = await fetchAuthorReport(3, 'all');
     assert.deepStrictEqual(nobody!.articles.map((a) => [a.title, a.shares]), [['Six', 0]]);
+  });
+
+  test('lists exactly the authors the labeler issues author labels for', async () => {
+    const originalPoolQuery = pool.query;
+    pool.query = ((sql: string, params: any[]) => testPool.query(sql, params)) as any;
+    try {
+      const labeler = (await getActiveAuthors()).map((author) => author.name).sort();
+      const report = (await fetchAuthorsReport('all')).authors.map((author) => author.name).sort();
+      assert.deepStrictEqual(report, labeler);
+    } finally {
+      pool.query = originalPoolQuery;
+    }
   });
 });

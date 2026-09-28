@@ -92,6 +92,18 @@ export async function lookupArticle(url: string): Promise<ArticleMatch | null> {
 }
 
 /**
+ * Ids of the authors who get their own label: at least 2 opinion articles, or at least 2
+ * US politics articles. Shared by the labeler and the reports so they can't drift apart.
+ */
+export const LABEL_AUTHOR_IDS_SQL = `
+      SELECT j2."B"
+      FROM "_ArticleToAuthor" j2
+      JOIN "Article" a2 ON j2."A" = a2.id
+      GROUP BY j2."B"
+      HAVING SUM(CASE WHEN a2.section = 'opinion' THEN 1 ELSE 0 END) >= 2
+          OR SUM(CASE WHEN LOWER(a2.section) = 'us' AND LOWER(a2.subsection) = 'politics' THEN 1 ELSE 0 END) >= 2`;
+
+/**
  * Gets the restricted list of published authors:
  * Authors who have written >= 2 articles in the 'opinion' section,
  * OR >= 2 articles in the 'us' section and 'politics' subsection (case-insensitive).
@@ -102,14 +114,7 @@ export async function getActiveAuthors(): Promise<{ id: number; name: string; to
     FROM "Author" auth
     JOIN "_ArticleToAuthor" j ON auth.id = j."B"
     JOIN "Article" a ON j."A" = a.id
-    WHERE auth.id IN (
-      SELECT j2."B"
-      FROM "_ArticleToAuthor" j2
-      JOIN "Article" a2 ON j2."A" = a2.id
-      GROUP BY j2."B"
-      HAVING SUM(CASE WHEN a2.section = 'opinion' THEN 1 ELSE 0 END) >= 2
-          OR SUM(CASE WHEN LOWER(a2.section) = 'us' AND LOWER(a2.subsection) = 'politics' THEN 1 ELSE 0 END) >= 2
-    )
+    WHERE auth.id IN (${LABEL_AUTHOR_IDS_SQL})
     GROUP BY auth.id, auth.name
     ORDER BY total_articles DESC, auth.name ASC;
   `;

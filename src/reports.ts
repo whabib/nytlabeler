@@ -1,4 +1,5 @@
 import { metricsPool, POST_ARTICLES_TABLE } from './post-articles.js';
+import { LABEL_AUTHOR_IDS_SQL } from './database.js';
 
 /** The periods the Reports page covers, newest first. */
 export const REPORT_WINDOWS = [
@@ -115,9 +116,10 @@ export interface AuthorsReport {
 }
 
 /**
- * Authors with their article and share counts, most shared first (then most articles). With
- * the "shared" scope, only authors with a shared article are listed and only those articles
- * count; with "all", every author with an article in nytdata is listed.
+ * Authors who get their own label, with their article and share counts, most shared first
+ * (then most articles). With the "shared" scope, only those with a shared article are listed
+ * and only those articles count; with "all", every label author is listed with all of their
+ * articles.
  */
 export function fetchAuthorsReport(scope: AuthorScope = 'shared', now = Date.now()): Promise<AuthorsReport> {
   return cachedReport(`authors:${scope}`, now, async () => {
@@ -128,7 +130,8 @@ export function fetchAuthorsReport(scope: AuthorScope = 'shared', now = Date.now
        JOIN "Author" au ON au.id = j."B"
        LEFT JOIN (SELECT article_id, COUNT(*) AS shares FROM ${POST_ARTICLES_TABLE} GROUP BY article_id) s
          ON s.article_id = j."A"
-       WHERE $1::boolean OR s.article_id IS NOT NULL
+       WHERE j."B" IN (${LABEL_AUTHOR_IDS_SQL})
+         AND ($1::boolean OR s.article_id IS NOT NULL)
        GROUP BY au.id, au.name
        ORDER BY shares DESC, articles DESC, au.name, au.id`,
       [scope === 'all'],

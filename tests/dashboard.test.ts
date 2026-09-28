@@ -723,7 +723,7 @@ describe('Reports › By Authors', () => {
     toggle.dispatchEvent(new window.Event('change'));
     await wait();
     assert.deepStrictEqual(rows(), [['Zoe Writer', '9', '12'], ['Never Shared', '4', '0']]);
-    assert.match(document.getElementById('authors-description')!.textContent!, /^Every author in nytdata/);
+    assert.match(document.getElementById('authors-description')!.textContent!, /^Every author with their own label/);
   });
 
   test("keeps showing all articles in an author's view, including those never shared", async () => {
@@ -745,6 +745,6 @@ describe('Reports › By Authors', () => {
     assert.strictEqual(report().querySelector('h3')!.textContent, 'Zoe Writer');
     assert.deepStrictEqual(rows().map((row) => row[0]), ['Oldest', 'Middle', PAYLOAD]);
     assert.strictEqual(report().querySelector('[data-sort="date"]')!.closest('th')!.getAttribute('aria-sort'), 'ascending');
-    assert.match(document.getElementById('authors-description')!.textContent!, /^Authors of the NYT articles/);
+    assert.match(document.getElementById('authors-description')!.textContent!, /^Authors with their own label/);
   });
 });
