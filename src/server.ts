@@ -1,4 +1,5 @@
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
@@ -15,6 +16,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const app = express();
+
+// Cloud Run's front end is the one proxy in front of the app. Trusting exactly one hop makes
+// req.ip the client address it appends to X-Forwarded-For; a client can't spoof it with
+// entries of its own. The report rate limit keys on it.
+app.set('trust proxy', 1);
 export const server = http.createServer(app);
 
 // Initialize WebSocket Server for dashboard
@@ -356,6 +362,17 @@ app.get('/api/labels/recent', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch recent labels' });
   }
 });
+
+// Report queries run on the metrics pool's single connection, and every author id or scope is
+// a separate cache entry, so a client could otherwise keep that connection busy
+export const REPORTS_RATE_LIMIT = { windowMs: 60_000, limit: 60 };
+export const reportsLimiter = rateLimit({
+  ...REPORTS_RATE_LIMIT,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Too many report requests. Try again in a minute.' },
+});
+app.use('/api/reports', reportsLimiter);
 
 // Most shared articles per period, for the Reports page
 app.get('/api/reports/popular-articles', async (req, res) => {

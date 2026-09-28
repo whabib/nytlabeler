@@ -43,7 +43,7 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 }
 
 // Dynamically import to ensure process.env is read correctly
-const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES } = await import('../src/server.js');
+const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES, REPORTS_RATE_LIMIT, reportsLimiter } = await import('../src/server.js');
 const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 const { metricsPool } = await import('../src/post-articles.js');
@@ -432,6 +432,31 @@ describe('WebSocket Protocol Proxy', () => {
       assert.strictEqual(queried, false);
     } finally {
       metricsPool.query = originalQuery;
+    }
+  }));
+
+  test('should rate-limit report requests per client, keyed on the address Cloud Run adds', cleanErrors(async () => {
+    // Cloud Run's front end appends the client's address to X-Forwarded-For. An invalid author
+    // id answers without touching the database, but still counts toward the limit.
+    const request = (forwardedFor: string, path = '/api/reports/authors/abc') =>
+      fetch(`http://127.0.0.1:14100${path}`, { headers: { 'X-Forwarded-For': forwardedFor } });
+    try {
+      for (let i = 0; i < REPORTS_RATE_LIMIT.limit; i++) {
+        assert.strictEqual((await request('203.0.113.5')).status, 400);
+      }
+      const limited = await request('203.0.113.5');
+      assert.strictEqual(limited.status, 429);
+      assert.deepStrictEqual(await limited.json(), { error: 'Too many report requests. Try again in a minute.' });
+      assert.ok(limited.headers.get('ratelimit-policy'), 'Standard RateLimit headers are sent');
+
+      // A client can't get around it by adding its own addresses in front
+      assert.strictEqual((await request('198.51.100.9, 203.0.113.5')).status, 429);
+      // Other clients, and the rest of the API, are unaffected
+      assert.strictEqual((await request('203.0.113.6')).status, 400);
+      assert.strictEqual((await request('203.0.113.5', '/api/stats')).status, 200);
+    } finally {
+      await reportsLimiter.resetKey('203.0.113.5');
+      await reportsLimiter.resetKey('203.0.113.6');
     }
   }));
 
