@@ -53,7 +53,13 @@
           <span class="nav-icon">⚙️</span> Settings
         </button>
       </nav>
-      
+
+      <!-- Required by the NYT API branding guide (https://developer.nytimes.com/branding):
+           the unaltered logo, at its own size, linking directly to developer.nytimes.com -->
+      <a class="nyt-attribution" href="https://developer.nytimes.com" target="_blank" rel="noopener noreferrer">
+        <img src="images/poweredby_nytimes_150a.png" width="150" height="30" alt="Data provided by The New York Times">
+      </a>
+
       <div class="sidebar-footer">
         <div class="connection-status" id="ws-status">
           <span class="status-dot pulsing"></span> Connecting...

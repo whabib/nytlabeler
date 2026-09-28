@@ -177,8 +177,22 @@ body {
   border: 1px solid rgba(138, 92, 246, 0.2);
 }
 
+/* NYT API attribution: shown at its own 150×30 size, never scaled or filtered */
+.nyt-attribution {
+  display: block;
+  align-self: flex-start;
+  margin-bottom: 16px;
+  line-height: 0;
+}
+
+.nyt-attribution img {
+  display: block;
+  width: 150px;
+  height: 30px;
+  max-width: none;
+}
+
 .sidebar-footer {
-  margin-top: auto;
   border-top: 1px solid var(--border-color);
   padding-top: 16px;
   display: flex;
