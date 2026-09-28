@@ -43,7 +43,7 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 }
 
 // Dynamically import to ensure process.env is read correctly
-const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES } = await import('../src/server.js');
+const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES, REPORTS_RATE_LIMIT, reportsLimiter } = await import('../src/server.js');
 const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 const { metricsPool } = await import('../src/post-articles.js');
@@ -364,6 +364,115 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should serve the authors report and one author\'s articles', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    const queries: any[][] = [];
+    metricsPool.query = (async (sql: string, params: any[] = []) => {
+      queries.push(params);
+      if (sql.includes('FROM "Author" WHERE id')) return { rows: params[0] === 7 ? [{ id: 7, name: 'Zoe Writer' }] : [] };
+      if (sql.includes('WHERE j."B" = $1')) {
+        return { rows: [{ id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', date_created: new Date('2026-09-26T03:30:00Z'), shares: 4 }] };
+      }
+      return { rows: [{ id: 7, name: 'Zoe Writer', articles: 2, shares: 7 }] };
+    }) as any;
+    resetReportCache();
+    try {
+      const list = await fetch('http://127.0.0.1:14100/api/reports/authors');
+      assert.strictEqual(list.status, 200);
+      assert.deepStrictEqual((await list.json()).authors, [{ id: 7, name: 'Zoe Writer', articles: 2, shares: 7 }]);
+
+      const author = await fetch('http://127.0.0.1:14100/api/reports/authors/7');
+      assert.strictEqual(author.status, 200);
+      const report = await author.json();
+      assert.deepStrictEqual(report.author, { id: 7, name: 'Zoe Writer' });
+      assert.deepStrictEqual(report.articles, [
+        { id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', dateAdded: '2026-09-26T03:30:00.000Z', shares: 4 },
+      ]);
+
+      const unknown = await fetch('http://127.0.0.1:14100/api/reports/authors/8');
+      assert.strictEqual(unknown.status, 404);
+
+      // ?scope=all asks for every article; the default is shared articles only
+      queries.length = 0;
+      resetReportCache();
+      await fetch('http://127.0.0.1:14100/api/reports/authors?scope=all');
+      await fetch('http://127.0.0.1:14100/api/reports/authors/7?scope=all');
+      await fetch('http://127.0.0.1:14100/api/reports/authors?scope=shared');
+      assert.deepStrictEqual(queries, [[true], [7], [7, true], [false]]);
+    } finally {
+      metricsPool.query = originalQuery;
+      resetReportCache();
+    }
+  }));
+
+  test('should reject author ids that are not positive 32-bit integers, without querying', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    let queried = false;
+    metricsPool.query = (async () => { queried = true; return { rows: [] }; }) as any;
+    try {
+      for (const id of ['abc', '0', '-1', '1.5', '01', '2147483648', '99999999999', '1%20OR%201=1']) {
+        const res = await fetch(`http://127.0.0.1:14100/api/reports/authors/${id}`);
+        assert.strictEqual(res.status, 400, `id ${id}`);
+      }
+      assert.strictEqual(queried, false);
+    } finally {
+      metricsPool.query = originalQuery;
+    }
+  }));
+
+  test('should reject an unknown scope, without querying', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    let queried = false;
+    metricsPool.query = (async () => { queried = true; return { rows: [] }; }) as any;
+    try {
+      for (const path of ['/api/reports/authors?scope=everything', '/api/reports/authors/7?scope=', '/api/reports/authors?scope=all&scope=all']) {
+        const res = await fetch(`http://127.0.0.1:14100${path}`);
+        assert.strictEqual(res.status, 400, path);
+      }
+      assert.strictEqual(queried, false);
+    } finally {
+      metricsPool.query = originalQuery;
+    }
+  }));
+
+  test('should rate-limit report requests per client, keyed on the address Cloud Run adds', cleanErrors(async () => {
+    // Cloud Run's front end appends the client's address to X-Forwarded-For. An invalid author
+    // id answers without touching the database, but still counts toward the limit.
+    const request = (forwardedFor: string, path = '/api/reports/authors/abc') =>
+      fetch(`http://127.0.0.1:14100${path}`, { headers: { 'X-Forwarded-For': forwardedFor } });
+    try {
+      for (let i = 0; i < REPORTS_RATE_LIMIT.limit; i++) {
+        assert.strictEqual((await request('203.0.113.5')).status, 400);
+      }
+      const limited = await request('203.0.113.5');
+      assert.strictEqual(limited.status, 429);
+      assert.deepStrictEqual(await limited.json(), { error: 'Too many report requests. Try again in a minute.' });
+      assert.ok(limited.headers.get('ratelimit-policy'), 'Standard RateLimit headers are sent');
+
+      // A client can't get around it by adding its own addresses in front
+      assert.strictEqual((await request('198.51.100.9, 203.0.113.5')).status, 429);
+      // Other clients, and the rest of the API, are unaffected
+      assert.strictEqual((await request('203.0.113.6')).status, 400);
+      assert.strictEqual((await request('203.0.113.5', '/api/stats')).status, 200);
+    } finally {
+      await reportsLimiter.resetKey('203.0.113.5');
+      await reportsLimiter.resetKey('203.0.113.6');
+    }
+  }));
+
+  test('should return 500 when the authors report fails', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    metricsPool.query = (async () => { throw new Error('statement timeout'); }) as any;
+    resetReportCache();
+    try {
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors')).status, 500);
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors/7')).status, 500);
+    } finally {
+      metricsPool.query = originalQuery;
+      resetReportCache();
+    }
+  }));
+
   test('should return empty reports without a LabelerServer (dry-run)', cleanErrors(async () => {
     const originalQuery = metricsPool.query;
     let queried = false;
@@ -375,6 +484,9 @@ describe('WebSocket Protocol Proxy', () => {
       const report = await res.json();
       assert.strictEqual(report.windows.length, 4);
       assert.ok(report.windows.every((w: any) => w.articles.length === 0));
+      const authors = await fetch('http://127.0.0.1:14100/api/reports/authors');
+      assert.deepStrictEqual((await authors.json()).authors, []);
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors/7')).status, 404);
       assert.strictEqual(queried, false, 'No share table exists in dry-run mode');
     } finally {
       metricsPool.query = originalQuery;

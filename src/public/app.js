@@ -3,30 +3,55 @@
 // ==========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Tab Navigation Setup
-  const tabs = document.querySelectorAll('.nav-item');
+  // Tab Navigation Setup: every sidebar item with a data-tab opens that tab's pane
+  const tabs = document.querySelectorAll('.nav-item[data-tab]');
   const panes = document.querySelectorAll('.tab-pane');
+  const reportsToggle = document.querySelector('#reports-nav .nav-group-toggle');
+  const reportsSubmenu = document.getElementById('reports-submenu');
+
+  function showTab(activeTab) {
+    // Update sidebar nav state
+    tabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === activeTab));
+
+    // Update pane state
+    panes.forEach(pane => {
+      if (pane.id === `tab-${activeTab}`) {
+        pane.classList.add('active');
+      } else {
+        pane.classList.remove('active');
+      }
+    });
+
+    // The Reports group shows which of its reports is open
+    const inReports = Boolean(reportsSubmenu?.querySelector(`[data-tab="${activeTab}"]`));
+    reportsToggle?.classList.toggle('has-active', inReports);
+    if (inReports) setReportsExpanded(true);
+
+    // Reports are loaded when opened, so they're current each time
+    if (activeTab === 'reports') loadReports();
+    if (activeTab === 'reports-authors') loadAuthorsReport();
+  }
 
   tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const activeTab = tab.getAttribute('data-tab');
-      
-      // Update sidebar nav state
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
+    tab.addEventListener('click', () => showTab(tab.getAttribute('data-tab')));
+  });
 
-      // Update pane state
-      panes.forEach(pane => {
-        if (pane.id === `tab-${activeTab}`) {
-          pane.classList.add('active');
-        } else {
-          pane.classList.remove('active');
-        }
-      });
+  function setReportsExpanded(expanded) {
+    if (!reportsToggle || !reportsSubmenu) return;
+    reportsToggle.setAttribute('aria-expanded', String(expanded));
+    reportsSubmenu.hidden = !expanded;
+  }
 
-      // Reports are loaded when opened, so they're current each time
-      if (activeTab === 'reports') loadReports();
-    });
+  // Opening the Reports group shows its first report, unless one is already open. The group
+  // stays open while one of its reports is showing, so the open report is never hidden.
+  reportsToggle?.addEventListener('click', () => {
+    const expanded = reportsToggle.getAttribute('aria-expanded') === 'true';
+    const reportShowing = Boolean(reportsSubmenu.querySelector('.nav-item.active'));
+    if (expanded && reportShowing) return;
+    setReportsExpanded(!expanded);
+    if (!expanded && !reportShowing) {
+      showTab(reportsSubmenu.querySelector('[data-tab]').getAttribute('data-tab'));
+    }
   });
 
   // Active Connection variables
@@ -395,6 +420,217 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // An article's title (or URL, without one), linked to the article
+  function articleLinkHtml(article) {
+    const title = escapeHtml(article.title || article.url);
+    // Link only to web pages: an article URL from the database can't become a script link
+    return /^https?:\/\//i.test(String(article.url ?? ''))
+      ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener noreferrer" class="report-article-link">${title}</a>`
+      : title;
+  }
+
+  // Reports › By Authors: the author list, and a drill-down into one author's articles
+  // scope: 'shared' (articles shared since recording began) or 'all' (every article nytdata has)
+  const authorsView = { author: null, articles: [], sort: { key: 'shares', dir: 'desc' }, scope: 'shared' };
+  const AUTHOR_DESCRIPTIONS = {
+    shared: 'Authors with their own label, and how often their articles were linked in labeled Bluesky posts since recording began on September 26, 2026. An article with several authors counts for each of them.',
+    all: 'Every author with their own label, with all of their articles. Shares are counted since recording began on September 26, 2026, so earlier articles show 0. An article with several authors counts for each of them.',
+  };
+  const scopeQuery = () => (authorsView.scope === 'all' ? '?scope=all' : '');
+
+  document.getElementById('authors-all')?.addEventListener('change', (event) => {
+    authorsView.scope = event.target.checked ? 'all' : 'shared';
+    const description = document.getElementById('authors-description');
+    if (description) description.textContent = AUTHOR_DESCRIPTIONS[authorsView.scope];
+    // Reload whichever view is showing
+    if (authorsView.author) loadAuthor(authorsView.author.id);
+    else loadAuthorsReport();
+  });
+  let authorsRequest = 0; // Only the latest request's response is shown
+
+  document.getElementById('authors-refresh')?.addEventListener('click', () => {
+    if (authorsView.author) loadAuthor(authorsView.author.id);
+    else loadAuthorsReport();
+  });
+
+  document.getElementById('authors-report')?.addEventListener('click', (event) => {
+    const authorButton = event.target.closest('[data-author-id]');
+    if (authorButton) {
+      loadAuthor(Number(authorButton.getAttribute('data-author-id')));
+      return;
+    }
+    if (event.target.closest('[data-action="all-authors"]')) {
+      loadAuthorsReport();
+      return;
+    }
+    const sortButton = event.target.closest('[data-sort]');
+    if (sortButton) {
+      const key = sortButton.getAttribute('data-sort');
+      const { sort } = authorsView;
+      // The same column flips direction; a new column starts with the highest first
+      authorsView.sort = sort.key === key ? { key, dir: sort.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' };
+      renderAuthorArticles();
+    }
+  });
+
+  // Returns null when a newer request has replaced this one, whether this one succeeded or
+  // failed, so a late response never overwrites the newer view
+  async function fetchAuthorsJson(url, container, loadingText) {
+    const request = ++authorsRequest;
+    container.innerHTML = `<div class="empty-state">${loadingText}</div>`;
+    try {
+      const res = await fetch(url);
+      if (request !== authorsRequest) return null;
+      if (res.status === 404) return { notFound: true };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return request === authorsRequest ? data : null;
+    } catch (err) {
+      if (request !== authorsRequest) return null;
+      throw err;
+    }
+  }
+
+  async function loadAuthorsReport() {
+    const container = document.getElementById('authors-report');
+    if (!container) return;
+    authorsView.author = null;
+    try {
+      const report = await fetchAuthorsJson(`/api/reports/authors${scopeQuery()}`, container, 'Loading authors…');
+      if (report) renderAuthors(report);
+    } catch (err) {
+      console.error('Failed to load the authors report:', err);
+      container.innerHTML = '<div class="empty-state">Couldn\'t load the authors report. Try Refresh.</div>';
+    }
+  }
+
+  function renderAuthors(report) {
+    const authors = Array.isArray(report?.authors) ? report.authors : [];
+    const rows = authors.length
+      ? authors.map((author) => {
+          const name = escapeHtml(author.name);
+          // Ids are integers; anything else isn't clickable
+          const nameHtml = Number.isInteger(author.id) && author.id > 0
+            ? `<button type="button" class="link-button" data-author-id="${author.id}">${name}</button>`
+            : name;
+          return `
+            <tr>
+              <td class="article-title-cell">${nameHtml}</td>
+              <td class="report-shares">${Number(author.articles) || 0}</td>
+              <td class="report-shares">${Number(author.shares) || 0}</td>
+            </tr>`;
+        }).join('')
+      : `<tr><td colspan="3" class="empty-state">${authorsView.scope === 'all' ? 'No authors yet.' : 'No shares recorded yet.'}</td></tr>`;
+    document.getElementById('authors-report').innerHTML = `
+      <div class="report-card glass history-table-container authors-card">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Author Name</th>
+              <th class="report-shares">Number of Articles</th>
+              <th class="report-shares">Number of Shares</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    setUpdated('authors-updated', report?.generatedAt);
+  }
+
+  async function loadAuthor(authorId) {
+    const container = document.getElementById('authors-report');
+    if (!container || !Number.isInteger(authorId) || authorId <= 0) return;
+    try {
+      const report = await fetchAuthorsJson(`/api/reports/authors/${authorId}${scopeQuery()}`, container, 'Loading articles…');
+      if (!report) return;
+      if (report.notFound) {
+        authorsView.author = null;
+        container.innerHTML = `
+          <button type="button" class="action-btn back-btn" data-action="all-authors">← All authors</button>
+          <div class="empty-state">That author wasn't found.</div>`;
+        return;
+      }
+      // A different author starts sorted by shares; reloading the same one (Refresh, or the
+      // Show all articles switch) keeps the chosen sort
+      if (authorsView.author?.id !== report.author?.id) authorsView.sort = { key: 'shares', dir: 'desc' };
+      authorsView.author = report.author;
+      authorsView.articles = Array.isArray(report.articles) ? report.articles : [];
+      authorsView.generatedAt = report.generatedAt;
+      renderAuthorArticles();
+    } catch (err) {
+      console.error('Failed to load the author report:', err);
+      container.innerHTML = `
+        <button type="button" class="action-btn back-btn" data-action="all-authors">← All authors</button>
+        <div class="empty-state">Couldn't load this author's articles. Try Refresh.</div>`;
+    }
+  }
+
+  const timeOf = (value) => {
+    const time = Date.parse(value);
+    return Number.isNaN(time) ? 0 : time;
+  };
+
+  function sortedAuthorArticles() {
+    const { key, dir } = authorsView.sort;
+    const sign = dir === 'asc' ? 1 : -1;
+    return [...authorsView.articles].sort((a, b) => {
+      const byDate = timeOf(a.dateAdded) - timeOf(b.dateAdded);
+      const byShares = (Number(a.shares) || 0) - (Number(b.shares) || 0);
+      // Ties on the chosen column go to the other one, highest (or newest) first
+      return key === 'date' ? sign * byDate || -byShares : sign * byShares || -byDate;
+    });
+  }
+
+  function formatReportDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    // Dates are shown in New York time
+    return date.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function renderAuthorArticles() {
+    const { author, sort } = authorsView;
+    const articles = sortedAuthorArticles();
+    const header = (key, label, extraTitle = '') => {
+      const active = sort.key === key;
+      const ariaSort = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+      const arrow = active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      return `<th class="report-shares" aria-sort="${ariaSort}"${extraTitle ? ` title="${extraTitle}"` : ''}>
+          <button type="button" class="sort-button" data-sort="${key}">${label}${arrow}</button>
+        </th>`;
+    };
+    const rows = articles.length
+      ? articles.map((article) => `
+          <tr>
+            <td class="article-title-cell">${articleLinkHtml(article)}</td>
+            <td class="report-shares report-date">${escapeHtml(formatReportDate(article.dateAdded))}</td>
+            <td class="report-shares">${Number(article.shares) || 0}</td>
+          </tr>`).join('')
+      : `<tr><td colspan="3" class="empty-state">${authorsView.scope === 'all' ? 'No articles.' : 'No shared articles.'}</td></tr>`;
+    document.getElementById('authors-report').innerHTML = `
+      <button type="button" class="action-btn back-btn" data-action="all-authors">← All authors</button>
+      <div class="report-card glass history-table-container author-articles-card">
+        <h3>${escapeHtml(author?.name)}</h3>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Article Title</th>
+              ${header('date', 'Date Published', 'When the article first appeared in the NYT Top Stories feed, usually close to publication')}
+              ${header('shares', 'Number of Shares')}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    setUpdated('authors-updated', authorsView.generatedAt);
+  }
+
+  function setUpdated(elementId, generatedAt) {
+    const updated = document.getElementById(elementId);
+    const at = new Date(generatedAt);
+    if (updated) updated.textContent = Number.isNaN(at.getTime()) ? '' : `Updated ${at.toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} ET`;
+  }
+
   function renderReports(report) {
     const list = document.getElementById('reports-list');
     const windows = Array.isArray(report?.windows) ? report.windows : [];
@@ -402,11 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const articles = Array.isArray(period.articles) ? period.articles : [];
       const rows = articles.length
         ? articles.map((article) => {
-            const title = escapeHtml(article.title || article.url);
-            // Link only to web pages: an article URL from the database can't become a script link
-            const titleHtml = /^https?:\/\//i.test(String(article.url ?? ''))
-              ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener noreferrer" class="report-article-link">${title}</a>`
-              : title;
+            const titleHtml = articleLinkHtml(article);
             const authors = Array.isArray(article.authors) && article.authors.length
               ? article.authors.map(escapeHtml).join(', ')
               : '—';
@@ -434,9 +666,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
     }).join('');
 
-    const updated = document.getElementById('reports-updated');
-    const generatedAt = new Date(report?.generatedAt);
-    if (updated) updated.textContent = Number.isNaN(generatedAt.getTime()) ? '' : `Updated ${generatedAt.toLocaleTimeString()}`;
+    setUpdated('reports-updated', report?.generatedAt);
   }
 
   // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML

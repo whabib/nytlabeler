@@ -177,6 +177,42 @@ body {
   border: 1px solid rgba(138, 92, 246, 0.2);
 }
 
+/* Sidebar groups (Reports) */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-group-toggle.has-active {
+  color: var(--text-primary);
+}
+
+.nav-caret {
+  margin-left: auto;
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-caret {
+  transform: rotate(90deg);
+}
+
+.nav-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-submenu[hidden] {
+  display: none;
+}
+
+.nav-subitem {
+  padding: 8px 16px 8px 46px;
+  font-size: 0.9rem;
+}
+
 /* NYT API attribution: shown at its own 150×30 size, never scaled or filtered */
 .nyt-attribution {
   display: block;
@@ -1043,6 +1079,93 @@ input:disabled + .slider {
   font-family: 'JetBrains Mono', monospace;
   text-align: right;
   white-space: nowrap;
+}
+
+/* Reports › By Authors */
+.authors-card .history-table,
+.author-articles-card .history-table {
+  table-layout: fixed;
+}
+
+.authors-card th:nth-child(1),
+.author-articles-card th:nth-child(1) {
+  width: 50%;
+}
+
+/* Long column names wrap rather than overflow on narrow screens */
+.authors-card th.report-shares,
+.author-articles-card th.report-shares {
+  white-space: normal;
+}
+
+.author-articles-card h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 20px 16px 4px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover,
+.link-button:focus-visible {
+  color: var(--neon-purple);
+  text-decoration: underline;
+}
+
+.sort-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  text-align: right;
+}
+
+.sort-button:hover,
+.sort-button:focus-visible {
+  color: var(--text-primary);
+}
+
+th[aria-sort="ascending"] .sort-button,
+th[aria-sort="descending"] .sort-button {
+  color: var(--neon-purple);
+}
+
+.history-table .report-date {
+  white-space: nowrap;
+}
+
+.scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-right: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scope-toggle input {
+  accent-color: var(--neon-purple);
+  cursor: pointer;
+}
+
+.back-btn {
+  margin-bottom: 16px;
 }
 
 .reports-updated {

@@ -1,4 +1,5 @@
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
@@ -8,13 +9,18 @@ import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } f
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
-import { fetchPopularArticlesReport, REPORT_WINDOWS } from './reports.js';
+import { fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, REPORT_WINDOWS, AUTHOR_SCOPES, type AuthorScope } from './reports.js';
 import { refreshDatabaseStatus, DB_CHECK_INTERVAL_MS } from './db-health.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const app = express();
+
+// Cloud Run's front end is the one proxy in front of the app. Trusting exactly one hop makes
+// req.ip the client address it appends to X-Forwarded-For; a client can't spoof it with
+// entries of its own. The report rate limit keys on it.
+app.set('trust proxy', 1);
 export const server = http.createServer(app);
 
 // Initialize WebSocket Server for dashboard
@@ -357,6 +363,17 @@ app.get('/api/labels/recent', async (req, res) => {
   }
 });
 
+// Report queries run on the metrics pool's single connection, and every author id or scope is
+// a separate cache entry, so a client could otherwise keep that connection busy
+export const REPORTS_RATE_LIMIT = { windowMs: 60_000, limit: 60 };
+export const reportsLimiter = rateLimit({
+  ...REPORTS_RATE_LIMIT,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Too many report requests. Try again in a minute.' },
+});
+app.use('/api/reports', reportsLimiter);
+
 // Most shared articles per period, for the Reports page
 app.get('/api/reports/popular-articles', async (req, res) => {
   // Shares are only recorded alongside published labels, so dry-run mode has none
@@ -374,6 +391,66 @@ app.get('/api/reports/popular-articles', async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to build the popular articles report:', error);
     res.status(500).json({ error: 'Failed to build the popular articles report' });
+  }
+});
+
+/** The author reports' ?scope=: "shared" (the default) or "all"; null for anything else. */
+function authorScope(req: express.Request): AuthorScope | null {
+  const { scope } = req.query;
+  if (scope === undefined) return 'shared';
+  return typeof scope === 'string' && (AUTHOR_SCOPES as readonly string[]).includes(scope) ? (scope as AuthorScope) : null;
+}
+
+// Authors and their articles' shares, for the Reports page
+app.get('/api/reports/authors', async (req, res) => {
+  const scope = authorScope(req);
+  if (!scope) {
+    res.status(400).json({ error: 'Invalid scope' });
+    return;
+  }
+  // Shares are only recorded alongside published labels, so dry-run mode has none
+  if (!labelerServer) {
+    res.json({ generatedAt: new Date().toISOString(), scope, authors: [] });
+    return;
+  }
+  try {
+    await labelStoreReady;
+    res.json(await fetchAuthorsReport(scope));
+  } catch (error) {
+    console.error('❌ Failed to build the authors report:', error);
+    res.status(500).json({ error: 'Failed to build the authors report' });
+  }
+});
+
+// One author's articles
+app.get('/api/reports/authors/:authorId', async (req, res) => {
+  // "Author".id is a positive 32-bit integer
+  const { authorId } = req.params;
+  const id = /^[1-9][0-9]{0,9}$/.test(authorId) ? Number(authorId) : NaN;
+  if (!(id <= 2147483647)) {
+    res.status(400).json({ error: 'Invalid author id' });
+    return;
+  }
+  const scope = authorScope(req);
+  if (!scope) {
+    res.status(400).json({ error: 'Invalid scope' });
+    return;
+  }
+  if (!labelerServer) {
+    res.status(404).json({ error: 'No shares are recorded in dry-run mode' });
+    return;
+  }
+  try {
+    await labelStoreReady;
+    const report = await fetchAuthorReport(id, scope);
+    if (!report) {
+      res.status(404).json({ error: 'Author not found' });
+      return;
+    }
+    res.json(report);
+  } catch (error) {
+    console.error('❌ Failed to build the report for author %d:', id, error);
+    res.status(500).json({ error: 'Failed to build the author report' });
   }
 });
 
