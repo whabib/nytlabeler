@@ -285,6 +285,16 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should serve the NYT attribution logo unaltered', cleanErrors(async () => {
+    const res = await fetch('http://127.0.0.1:14100/images/poweredby_nytimes_150a.png');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers.get('content-type'), 'image/png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    // The file as published at developer.nytimes.com/files/poweredby_nytimes_150a.png
+    const { createHash } = await import('node:crypto');
+    assert.strictEqual(createHash('sha256').update(bytes).digest('hex'), '0f1b067b82f2316562be46fe066a2f7050afedea52fb4f13a24d82b80ca0807e');
+  }));
+
   test('should return 400 when firehose toggle has no JSON body', cleanErrors(async () => {
     const res = await fetch('http://127.0.0.1:14100/api/firehose/toggle', {
       method: 'POST',

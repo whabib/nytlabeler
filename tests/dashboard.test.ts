@@ -17,6 +17,11 @@ const BASE_STATS = {
   firehoseEnabled: true, firehoseConnected: true, firehoseLeader: true, throughput: 3, uptime: 10,
 };
 
+/** Images other than the page's own NYT attribution logo, i.e. any a payload created. */
+function injectedImages(document: Document) {
+  return [...document.querySelectorAll('img')].filter((img) => !img.closest('.nyt-attribution'));
+}
+
 /** Loads the real dashboard in jsdom with stubbed fetch responses and a fake WebSocket. */
 async function loadDashboard(responses: Record<string, unknown>) {
   const html = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
@@ -98,7 +103,7 @@ describe('Dashboard escapes outside data', () => {
   });
 
   test('renders no injected elements or event handlers anywhere', () => {
-    assert.strictEqual(document.querySelectorAll('img').length, 0, 'No <img> from the payload may be created');
+    assert.strictEqual(injectedImages(document).length, 0, 'No <img> from the payload may be created');
     assert.strictEqual(document.querySelectorAll('[onerror], [onmouseover]').length, 0);
     assert.strictEqual(window.__xss, undefined);
   });
@@ -203,7 +208,8 @@ describe('Dashboard on a standby instance', () => {
       (rows[1].querySelector('a') as HTMLAnchorElement).getAttribute('href'),
       'https://bsky.app/profile/did:plc:ewvi7nxzyoun6zhxrhs64oiz/post/abc',
     );
-    assert.strictEqual(document.querySelectorAll('img, [onerror], [onmouseover]').length, 0);
+    assert.strictEqual(injectedImages(document).length, 0);
+    assert.strictEqual(document.querySelectorAll('[onerror], [onmouseover]').length, 0);
     assert.strictEqual(window.__xss, undefined);
   });
 
@@ -370,7 +376,7 @@ describe('Reports page', () => {
   });
 
   test('renders titles, authors and URLs from the database as text, never as HTML or script', () => {
-    assert.strictEqual(document.querySelectorAll('img').length, 0);
+    assert.strictEqual(injectedImages(document).length, 0);
     assert.strictEqual(document.querySelectorAll('[onerror], [onmouseover]').length, 0);
     assert.strictEqual(window.__xss, undefined);
 
@@ -485,7 +491,7 @@ describe('Database status badge', () => {
   test('never renders the latency as HTML', () => {
     send({ type: 'heartbeat', stats: { ...BASE_STATS, database: { connected: true, latencyMs: PAYLOAD, checkedAt: PAYLOAD } } });
     assert.strictEqual(badge().text, 'Connected');
-    assert.strictEqual(document.querySelectorAll('img').length, 0);
+    assert.strictEqual(injectedImages(document).length, 0);
     assert.strictEqual(document.getElementById('db-status')!.title, '');
   });
 });
@@ -525,5 +531,38 @@ describe('Feed Listener switch', () => {
     toggle.checked = true;
     toggle.dispatchEvent(new window.Event('change'));
     assert.deepStrictEqual(sent.at(-1), { type: 'toggle', enabled: true });
+  });
+});
+
+describe('NYT API attribution', () => {
+  let window: any;
+  let document: Document;
+
+  before(async () => {
+    ({ window, document } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('shows the unaltered 150px logo, linking to developer.nytimes.com in a new tab', () => {
+    const link = document.querySelector('.sidebar a.nyt-attribution')!;
+    assert.strictEqual(link.getAttribute('href'), 'https://developer.nytimes.com');
+    assert.strictEqual(link.getAttribute('target'), '_blank');
+    assert.strictEqual(link.getAttribute('rel'), 'noopener noreferrer');
+    const img = link.querySelector('img')!;
+    assert.strictEqual(img.getAttribute('src'), 'images/poweredby_nytimes_150a.png');
+    assert.deepStrictEqual([img.getAttribute('width'), img.getAttribute('height')], ['150', '30']);
+    assert.strictEqual(img.getAttribute('alt'), 'Data provided by The New York Times');
+  });
+
+  test('sits just above the connection status section', () => {
+    const link = document.querySelector('.nyt-attribution')!;
+    assert.ok(link.nextElementSibling!.classList.contains('sidebar-footer'));
   });
 });
