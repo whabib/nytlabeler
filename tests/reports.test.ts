@@ -83,10 +83,15 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
         (1, 'https://www.nytimes.com/one.html', 'us', 'One', '2026-09-26 03:30:00'),
         (2, 'https://www.nytimes.com/two.html', 'opinion', 'Two', '2026-09-27 14:05:00'),
         (3, 'https://www.nytimes.com/three.html', 'world', 'Three', '2026-09-25 12:00:00'),
-        (4, 'https://www.nytimes.com/four.html', 'arts', NULL, '2026-09-24 12:00:00');
-      INSERT INTO "Author" (id, name) VALUES (3, 'Nobody Shared');
+        (4, 'https://www.nytimes.com/four.html', 'arts', NULL, '2026-09-24 12:00:00'),
+        -- Never shared (e.g. from before recording began)
+        (5, 'https://www.nytimes.com/five.html', 'us', 'Five', '2026-09-20 12:00:00'),
+        (6, 'https://www.nytimes.com/six.html', 'arts', 'Six', '2026-09-10 12:00:00');
+
       INSERT INTO "Author" (id, name) VALUES (1, 'Zoe Writer'), (2, 'Adam Author');
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (1, 1), (1, 2), (2, 1);
+      INSERT INTO "Author" (id, name) VALUES (3, 'Nobody Shared');
+      INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (5, 1), (6, 3);
     `);
     // Shares at different ages: article 1 is recent, article 2 older, article 3 only last week
     const shares: [number, string][] = [
@@ -159,5 +164,28 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
     assert.strictEqual(await fetchAuthorReport(999), null);
     const unshared = await fetchAuthorReport(3);
     assert.deepStrictEqual([unshared!.author.name, unshared!.articles], ['Nobody Shared', []]);
+  });
+
+  test('with every article, lists all authors and counts all of their articles', async () => {
+    const report = await fetchAuthorsReport('all');
+    assert.strictEqual(report.scope, 'all');
+    assert.deepStrictEqual(report.authors, [
+      { id: 1, name: 'Zoe Writer', articles: 3, shares: 7 }, // Articles 1, 2 and the unshared 5
+      { id: 2, name: 'Adam Author', articles: 1, shares: 4 },
+      { id: 3, name: 'Nobody Shared', articles: 1, shares: 0 },
+    ]);
+    // The default is unchanged
+    assert.deepStrictEqual((await fetchAuthorsReport()).authors.map((a) => a.name), ['Zoe Writer', 'Adam Author']);
+  });
+
+  test("with every article, includes an author's unshared articles with 0 shares", async () => {
+    const zoe = await fetchAuthorReport(1, 'all');
+    assert.deepStrictEqual(zoe!.articles.map((a) => [a.title, a.shares, a.dateAdded]), [
+      ['One', 4, '2026-09-26T03:30:00.000Z'],
+      ['Two', 3, '2026-09-27T14:05:00.000Z'],
+      ['Five', 0, '2026-09-20T12:00:00.000Z'],
+    ]);
+    const nobody = await fetchAuthorReport(3, 'all');
+    assert.deepStrictEqual(nobody!.articles.map((a) => [a.title, a.shares]), [['Six', 0]]);
   });
 });

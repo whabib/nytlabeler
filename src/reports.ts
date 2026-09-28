@@ -92,10 +92,17 @@ export function fetchPopularArticlesReport(now = Date.now()): Promise<PopularArt
   });
 }
 
+/**
+ * Which articles the author reports cover: those shared since recording began, or every
+ * article nytdata has (with 0 shares for those shared before recording began, or never).
+ */
+export type AuthorScope = 'shared' | 'all';
+export const AUTHOR_SCOPES: readonly AuthorScope[] = ['shared', 'all'];
+
 export interface AuthorShares {
   id: number;
   name: string;
-  /** Distinct articles by this author that were shared. */
+  /** This author's articles in the scope: shared ones, or all of them. */
   articles: number;
   /** Posts that shared any of those articles. An article with two authors counts for both. */
   shares: number;
@@ -103,22 +110,32 @@ export interface AuthorShares {
 
 export interface AuthorsReport {
   generatedAt: string;
+  scope: AuthorScope;
   authors: AuthorShares[];
 }
 
-/** Every author with a shared article, most shared first, since recording began. */
-export function fetchAuthorsReport(now = Date.now()): Promise<AuthorsReport> {
-  return cachedReport('authors', now, async () => {
+/**
+ * Authors with their article and share counts, most shared first (then most articles). With
+ * the "shared" scope, only authors with a shared article are listed and only those articles
+ * count; with "all", every author with an article in nytdata is listed.
+ */
+export function fetchAuthorsReport(scope: AuthorScope = 'shared', now = Date.now()): Promise<AuthorsReport> {
+  return cachedReport(`authors:${scope}`, now, async () => {
+    // Each (article, author) pair appears once in _ArticleToAuthor, so COUNT(*) counts articles
     const { rows } = await metricsPool.query(
-      `SELECT au.id, au.name, COUNT(DISTINCT pa.article_id)::int AS articles, COUNT(*)::int AS shares
-       FROM ${POST_ARTICLES_TABLE} pa
-       JOIN "_ArticleToAuthor" j ON j."A" = pa.article_id
+      `SELECT au.id, au.name, COUNT(*)::int AS articles, COALESCE(SUM(s.shares), 0)::int AS shares
+       FROM "_ArticleToAuthor" j
        JOIN "Author" au ON au.id = j."B"
+       LEFT JOIN (SELECT article_id, COUNT(*) AS shares FROM ${POST_ARTICLES_TABLE} GROUP BY article_id) s
+         ON s.article_id = j."A"
+       WHERE $1::boolean OR s.article_id IS NOT NULL
        GROUP BY au.id, au.name
-       ORDER BY shares DESC, au.name, au.id`,
+       ORDER BY shares DESC, articles DESC, au.name, au.id`,
+      [scope === 'all'],
     );
     return {
       generatedAt: new Date(now).toISOString(),
+      scope,
       authors: rows.map((row) => ({ id: row.id, name: row.name, articles: row.articles, shares: row.shares })),
     };
   });
@@ -135,29 +152,35 @@ export interface AuthorArticle {
 
 export interface AuthorReport {
   generatedAt: string;
+  scope: AuthorScope;
   author: { id: number; name: string };
   articles: AuthorArticle[];
 }
 
-/** An author's shared articles, most shared first; null for an unknown author. */
-export function fetchAuthorReport(authorId: number, now = Date.now()): Promise<AuthorReport | null> {
-  return cachedReport(`author:${authorId}`, now, async () => {
+/**
+ * An author's articles in the scope, most shared first (then newest); null for an unknown
+ * author.
+ */
+export function fetchAuthorReport(authorId: number, scope: AuthorScope = 'shared', now = Date.now()): Promise<AuthorReport | null> {
+  return cachedReport(`author:${authorId}:${scope}`, now, async () => {
     const author = await metricsPool.query('SELECT id, name FROM "Author" WHERE id = $1', [authorId]);
     if (author.rows.length === 0) return null;
     const { rows } = await metricsPool.query(
       // date_created is a TIMESTAMP without time zone holding UTC; mark it as UTC so it
       // doesn't depend on this process's time zone
-      `SELECT a.id, a.title, a.url, a.date_created AT TIME ZONE 'UTC' AS date_created, COUNT(*)::int AS shares
+      `SELECT a.id, a.title, a.url, a.date_created AT TIME ZONE 'UTC' AS date_created, COUNT(pa.id)::int AS shares
        FROM "_ArticleToAuthor" j
        JOIN "Article" a ON a.id = j."A"
-       JOIN ${POST_ARTICLES_TABLE} pa ON pa.article_id = a.id
+       LEFT JOIN ${POST_ARTICLES_TABLE} pa ON pa.article_id = a.id
        WHERE j."B" = $1
        GROUP BY a.id
+       HAVING $2::boolean OR COUNT(pa.id) > 0
        ORDER BY shares DESC, a.date_created DESC, a.id`,
-      [authorId],
+      [authorId, scope === 'all'],
     );
     return {
       generatedAt: new Date(now).toISOString(),
+      scope,
       author: { id: author.rows[0].id, name: author.rows[0].name },
       articles: rows.map((row) => ({
         id: row.id,

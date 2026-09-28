@@ -391,6 +391,14 @@ describe('WebSocket Protocol Proxy', () => {
 
       const unknown = await fetch('http://127.0.0.1:14100/api/reports/authors/8');
       assert.strictEqual(unknown.status, 404);
+
+      // ?scope=all asks for every article; the default is shared articles only
+      queries.length = 0;
+      resetReportCache();
+      await fetch('http://127.0.0.1:14100/api/reports/authors?scope=all');
+      await fetch('http://127.0.0.1:14100/api/reports/authors/7?scope=all');
+      await fetch('http://127.0.0.1:14100/api/reports/authors?scope=shared');
+      assert.deepStrictEqual(queries, [[true], [7], [7, true], [false]]);
     } finally {
       metricsPool.query = originalQuery;
       resetReportCache();
@@ -405,6 +413,21 @@ describe('WebSocket Protocol Proxy', () => {
       for (const id of ['abc', '0', '-1', '1.5', '01', '2147483648', '99999999999', '1%20OR%201=1']) {
         const res = await fetch(`http://127.0.0.1:14100/api/reports/authors/${id}`);
         assert.strictEqual(res.status, 400, `id ${id}`);
+      }
+      assert.strictEqual(queried, false);
+    } finally {
+      metricsPool.query = originalQuery;
+    }
+  }));
+
+  test('should reject an unknown scope, without querying', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    let queried = false;
+    metricsPool.query = (async () => { queried = true; return { rows: [] }; }) as any;
+    try {
+      for (const path of ['/api/reports/authors?scope=everything', '/api/reports/authors/7?scope=', '/api/reports/authors?scope=all&scope=all']) {
+        const res = await fetch(`http://127.0.0.1:14100${path}`);
+        assert.strictEqual(res.status, 400, path);
       }
       assert.strictEqual(queried, false);
     } finally {

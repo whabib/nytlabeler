@@ -427,7 +427,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Reports › By Authors: the author list, and a drill-down into one author's articles
-  const authorsView = { author: null, articles: [], sort: { key: 'shares', dir: 'desc' } };
+  // scope: 'shared' (articles shared since recording began) or 'all' (every article nytdata has)
+  const authorsView = { author: null, articles: [], sort: { key: 'shares', dir: 'desc' }, scope: 'shared' };
+  const AUTHOR_DESCRIPTIONS = {
+    shared: 'Authors of the NYT articles linked in labeled Bluesky posts, since recording began on September 26, 2026. An article with several authors counts for each of them.',
+    all: 'Every author in nytdata, with all of their articles. Shares are counted since recording began on September 26, 2026, so earlier articles show 0. An article with several authors counts for each of them.',
+  };
+  const scopeQuery = () => (authorsView.scope === 'all' ? '?scope=all' : '');
+
+  document.getElementById('authors-all')?.addEventListener('change', (event) => {
+    authorsView.scope = event.target.checked ? 'all' : 'shared';
+    const description = document.getElementById('authors-description');
+    if (description) description.textContent = AUTHOR_DESCRIPTIONS[authorsView.scope];
+    // Reload whichever view is showing
+    if (authorsView.author) loadAuthor(authorsView.author.id);
+    else loadAuthorsReport();
+  });
   let authorsRequest = 0; // Only the latest request's response is shown
 
   document.getElementById('authors-refresh')?.addEventListener('click', () => {
@@ -471,7 +486,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!container) return;
     authorsView.author = null;
     try {
-      const report = await fetchAuthorsJson('/api/reports/authors', container, 'Loading authors…');
+      const report = await fetchAuthorsJson(`/api/reports/authors${scopeQuery()}`, container, 'Loading authors…');
       if (report) renderAuthors(report);
     } catch (err) {
       console.error('Failed to load the authors report:', err);
@@ -495,7 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <td class="report-shares">${Number(author.shares) || 0}</td>
             </tr>`;
         }).join('')
-      : '<tr><td colspan="3" class="empty-state">No shares recorded yet.</td></tr>';
+      : `<tr><td colspan="3" class="empty-state">${authorsView.scope === 'all' ? 'No authors yet.' : 'No shares recorded yet.'}</td></tr>`;
     document.getElementById('authors-report').innerHTML = `
       <div class="report-card glass history-table-container authors-card">
         <table class="history-table">
@@ -516,7 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('authors-report');
     if (!container || !Number.isInteger(authorId) || authorId <= 0) return;
     try {
-      const report = await fetchAuthorsJson(`/api/reports/authors/${authorId}`, container, 'Loading articles…');
+      const report = await fetchAuthorsJson(`/api/reports/authors/${authorId}${scopeQuery()}`, container, 'Loading articles…');
       if (!report) return;
       if (report.notFound) {
         authorsView.author = null;
@@ -525,9 +540,11 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="empty-state">That author wasn't found.</div>`;
         return;
       }
+      // A different author starts sorted by shares; reloading the same one (Refresh, or the
+      // Show all articles switch) keeps the chosen sort
+      if (authorsView.author?.id !== report.author?.id) authorsView.sort = { key: 'shares', dir: 'desc' };
       authorsView.author = report.author;
       authorsView.articles = Array.isArray(report.articles) ? report.articles : [];
-      authorsView.sort = { key: 'shares', dir: 'desc' };
       authorsView.generatedAt = report.generatedAt;
       renderAuthorArticles();
     } catch (err) {
@@ -579,7 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td class="report-shares report-date">${escapeHtml(formatReportDate(article.dateAdded))}</td>
             <td class="report-shares">${Number(article.shares) || 0}</td>
           </tr>`).join('')
-      : '<tr><td colspan="3" class="empty-state">No shared articles.</td></tr>';
+      : `<tr><td colspan="3" class="empty-state">${authorsView.scope === 'all' ? 'No articles.' : 'No shared articles.'}</td></tr>`;
     document.getElementById('authors-report').innerHTML = `
       <button type="button" class="action-btn back-btn" data-action="all-authors">← All authors</button>
       <div class="report-card glass history-table-container author-articles-card">

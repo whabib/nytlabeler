@@ -8,7 +8,7 @@ import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } f
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
-import { fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, REPORT_WINDOWS } from './reports.js';
+import { fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, REPORT_WINDOWS, AUTHOR_SCOPES, type AuthorScope } from './reports.js';
 import { refreshDatabaseStatus, DB_CHECK_INTERVAL_MS } from './db-health.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -377,23 +377,35 @@ app.get('/api/reports/popular-articles', async (req, res) => {
   }
 });
 
-// Authors whose articles were shared, for the Reports page
+/** The author reports' ?scope=: "shared" (the default) or "all"; null for anything else. */
+function authorScope(req: express.Request): AuthorScope | null {
+  const { scope } = req.query;
+  if (scope === undefined) return 'shared';
+  return typeof scope === 'string' && (AUTHOR_SCOPES as readonly string[]).includes(scope) ? (scope as AuthorScope) : null;
+}
+
+// Authors and their articles' shares, for the Reports page
 app.get('/api/reports/authors', async (req, res) => {
+  const scope = authorScope(req);
+  if (!scope) {
+    res.status(400).json({ error: 'Invalid scope' });
+    return;
+  }
   // Shares are only recorded alongside published labels, so dry-run mode has none
   if (!labelerServer) {
-    res.json({ generatedAt: new Date().toISOString(), authors: [] });
+    res.json({ generatedAt: new Date().toISOString(), scope, authors: [] });
     return;
   }
   try {
     await labelStoreReady;
-    res.json(await fetchAuthorsReport());
+    res.json(await fetchAuthorsReport(scope));
   } catch (error) {
     console.error('❌ Failed to build the authors report:', error);
     res.status(500).json({ error: 'Failed to build the authors report' });
   }
 });
 
-// One author's shared articles
+// One author's articles
 app.get('/api/reports/authors/:authorId', async (req, res) => {
   // "Author".id is a positive 32-bit integer
   const { authorId } = req.params;
@@ -402,13 +414,18 @@ app.get('/api/reports/authors/:authorId', async (req, res) => {
     res.status(400).json({ error: 'Invalid author id' });
     return;
   }
+  const scope = authorScope(req);
+  if (!scope) {
+    res.status(400).json({ error: 'Invalid scope' });
+    return;
+  }
   if (!labelerServer) {
     res.status(404).json({ error: 'No shares are recorded in dry-run mode' });
     return;
   }
   try {
     await labelStoreReady;
-    const report = await fetchAuthorReport(id);
+    const report = await fetchAuthorReport(id, scope);
     if (!report) {
       res.status(404).json({ error: 'Author not found' });
       return;

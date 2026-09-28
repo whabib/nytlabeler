@@ -291,9 +291,12 @@
         <header class="tab-header">
           <div>
             <h2>By Authors</h2>
-            <p>Authors of the NYT articles linked in labeled Bluesky posts, since recording began on September 26, 2026. An article with several authors counts for each of them.</p>
+            <p id="authors-description">Authors of the NYT articles linked in labeled Bluesky posts, since recording began on September 26, 2026. An article with several authors counts for each of them.</p>
           </div>
           <div class="history-controls">
+            <label class="scope-toggle" title="Include every article nytdata has, not only those shared since recording began">
+              <input type="checkbox" id="authors-all"> Show all articles
+            </label>
             <span class="reports-updated" id="authors-updated"></span>
             <button type="button" class="action-btn" id="authors-refresh">Refresh</button>
           </div>

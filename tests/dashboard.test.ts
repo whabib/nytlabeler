@@ -595,6 +595,24 @@ describe('Reports › By Authors', () => {
       ],
     },
     '/api/reports/authors/8': new Error('Failed to build the author report'),
+    // "Show all articles": every author and article, including those never shared
+    '/api/reports/authors?scope=all': {
+      generatedAt: '2026-09-28T16:00:00.000Z',
+      scope: 'all',
+      authors: [
+        { id: 7, name: 'Zoe Writer', articles: 9, shares: 12 },
+        { id: 9, name: 'Never Shared', articles: 4, shares: 0 },
+      ],
+    },
+    '/api/reports/authors/7?scope=all': {
+      generatedAt: '2026-09-28T16:00:00.000Z',
+      scope: 'all',
+      author: { id: 7, name: 'Zoe Writer' },
+      articles: [
+        { id: 1, title: 'Middle', url: 'https://www.nytimes.com/middle.html', dateAdded: '2026-09-27T14:05:00.000Z', shares: 5 },
+        { id: 4, title: 'Before Recording', url: 'https://www.nytimes.com/before.html', dateAdded: '2026-09-10T12:00:00.000Z', shares: 0 },
+      ],
+    },
   };
   const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
   const click = (el: Element | null) => (el as HTMLElement).click();
@@ -696,5 +714,37 @@ describe('Reports › By Authors', () => {
     click(report().querySelector('[data-action="all-authors"]'));
     await wait();
     assert.strictEqual(rows().length, 3);
+  });
+
+  test('Show all articles lists every author, and says what it counts', async () => {
+    const toggle = document.getElementById('authors-all') as HTMLInputElement;
+    assert.strictEqual(toggle.checked, false);
+    toggle.checked = true;
+    toggle.dispatchEvent(new window.Event('change'));
+    await wait();
+    assert.deepStrictEqual(rows(), [['Zoe Writer', '9', '12'], ['Never Shared', '4', '0']]);
+    assert.match(document.getElementById('authors-description')!.textContent!, /^Every author in nytdata/);
+  });
+
+  test("keeps showing all articles in an author's view, including those never shared", async () => {
+    click(report().querySelector('[data-author-id="7"]'));
+    await wait();
+    assert.deepStrictEqual(rows(), [
+      ['Middle', 'Sep 27, 2026', '5'],
+      ['Before Recording', 'Sep 10, 2026', '0'],
+    ]);
+  });
+
+  test("switching back keeps the author's view and its sort", async () => {
+    click(report().querySelector('[data-sort="date"]'));
+    click(report().querySelector('[data-sort="date"]')); // Oldest first
+    const toggle = document.getElementById('authors-all') as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new window.Event('change'));
+    await wait();
+    assert.strictEqual(report().querySelector('h3')!.textContent, 'Zoe Writer');
+    assert.deepStrictEqual(rows().map((row) => row[0]), ['Oldest', 'Middle', PAYLOAD]);
+    assert.strictEqual(report().querySelector('[data-sort="date"]')!.closest('th')!.getAttribute('aria-sort'), 'ascending');
+    assert.match(document.getElementById('authors-description')!.textContent!, /^Authors of the NYT articles/);
   });
 });

@@ -1148,6 +1148,22 @@ th[aria-sort="descending"] .sort-button {
   white-space: nowrap;
 }
 
+.scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-right: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scope-toggle input {
+  accent-color: var(--neon-purple);
+  cursor: pointer;
+}
+
 .back-btn {
   margin-bottom: 16px;
 }
