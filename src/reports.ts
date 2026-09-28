@@ -105,7 +105,10 @@ export interface AuthorShares {
   name: string;
   /** This author's articles in the scope: shared ones, or all of them. */
   articles: number;
-  /** Posts that shared any of those articles. An article with two authors counts for both. */
+  /**
+   * Posts that shared any of those articles, each counted once even if it linked several of
+   * them. An article with two authors counts for both.
+   */
   shares: number;
 }
 
@@ -123,15 +126,15 @@ export interface AuthorsReport {
  */
 export function fetchAuthorsReport(scope: AuthorScope = 'shared', now = Date.now()): Promise<AuthorsReport> {
   return cachedReport(`authors:${scope}`, now, async () => {
-    // Each (article, author) pair appears once in _ArticleToAuthor, so COUNT(*) counts articles
+    // Shares are distinct posts: one post linking two of an author's articles has two rows in
+    // post_articles but counts once
     const { rows } = await metricsPool.query(
-      `SELECT au.id, au.name, COUNT(*)::int AS articles, COALESCE(SUM(s.shares), 0)::int AS shares
+      `SELECT au.id, au.name, COUNT(DISTINCT j."A")::int AS articles, COUNT(DISTINCT pa.uri)::int AS shares
        FROM "_ArticleToAuthor" j
        JOIN "Author" au ON au.id = j."B"
-       LEFT JOIN (SELECT article_id, COUNT(*) AS shares FROM ${POST_ARTICLES_TABLE} GROUP BY article_id) s
-         ON s.article_id = j."A"
+       LEFT JOIN ${POST_ARTICLES_TABLE} pa ON pa.article_id = j."A"
        WHERE j."B" IN (${LABEL_AUTHOR_IDS_SQL})
-         AND ($1::boolean OR s.article_id IS NOT NULL)
+         AND ($1::boolean OR pa.id IS NOT NULL)
        GROUP BY au.id, au.name
        ORDER BY shares DESC, articles DESC, au.name, au.id`,
       [scope === 'all'],

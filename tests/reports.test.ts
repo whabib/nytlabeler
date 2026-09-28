@@ -213,4 +213,27 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
       pool.query = originalPoolQuery;
     }
   });
+
+  test('counts a post once per author even when it links several of their articles', async () => {
+    // One post (outside every Most Shared period) linking articles 1 and 2, both by Zoe
+    const uri = 'at://did:plc:x/app.bsky.feed.post/both';
+    for (const articleId of [1, 2]) {
+      await testPool.query(
+        `INSERT INTO post_articles (uri, author_did, article_id, created_at) VALUES ($1, 'did:plc:x', $2, now() - interval '9 days')`,
+        [uri, articleId],
+      );
+    }
+    resetReportCache();
+    try {
+      const authors = (await fetchAuthorsReport()).authors;
+      // Zoe: 7 posts before, plus this one once (counting rows would give 9); Adam: article 1 only
+      assert.deepStrictEqual(authors.map((a) => [a.name, a.articles, a.shares]), [['Zoe Writer', 2, 8], ['Adam Author', 1, 5]]);
+      // Per article, each post counts once, as before
+      const zoe = await fetchAuthorReport(1);
+      assert.deepStrictEqual(zoe!.articles.map((a) => [a.title, a.shares]), [['One', 5], ['Two', 4]]);
+    } finally {
+      await testPool.query('DELETE FROM post_articles WHERE uri = $1', [uri]);
+      resetReportCache();
+    }
+  });
 });
