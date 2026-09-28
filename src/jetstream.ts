@@ -104,11 +104,19 @@ let createLeaderClient: () => LeaderClient = () =>
   new pg.Client({ connectionString: DATABASE_URL, keepAlive: true });
 let leaderRetryMs = 10_000;
 
+/** Channel on which a newer instance asks the leader to hand over (see LeaderElection). */
+export const HANDOFF_CHANNEL = `nytlabeler_firehose_handoff_${ENV.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`.slice(0, 63);
+
 function getLeadership(): LeaderElection {
   leadership ??= new LeaderElection({
     lockKey: `nytlabeler:firehose:${ENV}`,
     createClient: createLeaderClient,
     retryMs: leaderRetryMs,
+    // The newest instance takes over: after a deploy or an instance replacement, the old
+    // instance can run for up to the request timeout, but new traffic goes to the new one
+    handoffChannel: HANDOFF_CHANNEL,
+    instanceId: `${process.env.K_REVISION ?? 'local'}/${Math.random().toString(36).slice(2, 8)}`,
+    startedAt: Date.parse(stats.startTime),
     onAcquire: () => {
       leaderGeneration++;
       stats.firehoseLeader = true;

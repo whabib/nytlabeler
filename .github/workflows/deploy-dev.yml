@@ -121,5 +121,5 @@ jobs:
             echo ""
             echo "- Revision: \`${revision}\`"
             echo "- Health: \`${health}\`"
-            echo "- The previous revision keeps firehose leadership until its subscribers disconnect (up to 30 minutes)."
+            echo "- The new revision takes over firehose leadership from the previous one within seconds of starting."
           } >> "$GITHUB_STEP_SUMMARY"
