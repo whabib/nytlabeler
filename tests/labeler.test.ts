@@ -7,6 +7,16 @@ import { POST_ARTICLES_TABLE, metricsPool } from '../src/post-articles.js';
 
 const TEST_KEY = new Uint8Array(32).fill(7);
 
+// Labeling logs every post and label. That output can garble the test runner's IPC stream
+// ("Unable to deserialize cloned data"), so keep it quiet, as the other suites do.
+const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+before(() => {
+  console.log = console.warn = console.error = () => {};
+});
+after(() => {
+  Object.assign(console, originalConsole);
+});
+
 describe('Labeler Logic', () => {
   // Metrics writes go nowhere unless a test captures them
   const originalMetricsQuery = metricsPool.query;
