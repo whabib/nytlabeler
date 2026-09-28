@@ -42,11 +42,14 @@ document.addEventListener('DOMContentLoaded', () => {
     reportsSubmenu.hidden = !expanded;
   }
 
-  // Opening the Reports group shows its first report, unless one is already open
+  // Opening the Reports group shows its first report, unless one is already open. The group
+  // stays open while one of its reports is showing, so the open report is never hidden.
   reportsToggle?.addEventListener('click', () => {
-    const expanding = reportsToggle.getAttribute('aria-expanded') !== 'true';
-    setReportsExpanded(expanding);
-    if (expanding && !reportsSubmenu.querySelector('.nav-item.active')) {
+    const expanded = reportsToggle.getAttribute('aria-expanded') === 'true';
+    const reportShowing = Boolean(reportsSubmenu.querySelector('.nav-item.active'));
+    if (expanded && reportShowing) return;
+    setReportsExpanded(!expanded);
+    if (!expanded && !reportShowing) {
       showTab(reportsSubmenu.querySelector('[data-tab]').getAttribute('data-tab'));
     }
   });
@@ -470,15 +473,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Returns null when a newer request has replaced this one, whether this one succeeded or
+  // failed, so a late response never overwrites the newer view
   async function fetchAuthorsJson(url, container, loadingText) {
     const request = ++authorsRequest;
     container.innerHTML = `<div class="empty-state">${loadingText}</div>`;
-    const res = await fetch(url);
-    if (request !== authorsRequest) return null; // A newer request replaced this one
-    if (res.status === 404) return { notFound: true };
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return request === authorsRequest ? data : null;
+    try {
+      const res = await fetch(url);
+      if (request !== authorsRequest) return null;
+      if (res.status === 404) return { notFound: true };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return request === authorsRequest ? data : null;
+    } catch (err) {
+      if (request !== authorsRequest) return null;
+      throw err;
+    }
   }
 
   async function loadAuthorsReport() {

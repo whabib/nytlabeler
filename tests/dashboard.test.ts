@@ -34,9 +34,11 @@ async function loadDashboard(responses: Record<string, unknown>) {
   const window: any = dom.window;
   let socket: any;
   const sent: unknown[] = []; // Messages the dashboard sends to its server
-  // An Error stands for a failed request (HTTP 500)
+  // An Error stands for a failed request (HTTP 500); a function returns a promise, for slow
+  // responses or network failures (a rejected fetch)
   window.fetch = async (url: string) => {
-    const response = responses[url];
+    let response = responses[url];
+    if (typeof response === 'function') response = await response();
     if (response instanceof Error) return { ok: false, status: 500, json: async () => ({ error: response.message }) };
     return { ok: true, json: async () => response };
   };
@@ -746,5 +748,42 @@ describe('Reports › By Authors', () => {
     assert.deepStrictEqual(rows().map((row) => row[0]), ['Oldest', 'Middle', PAYLOAD]);
     assert.strictEqual(report().querySelector('[data-sort="date"]')!.closest('th')!.getAttribute('aria-sort'), 'ascending');
     assert.match(document.getElementById('authors-description')!.textContent!, /^Authors with their own label/);
+  });
+
+  test('keeps the Reports group open while one of its reports is showing', async () => {
+    const toggle = document.querySelector('#reports-nav .nav-group-toggle')!;
+    const submenu = document.getElementById('reports-submenu')!;
+    assert.ok(document.getElementById('tab-reports-authors')!.classList.contains('active'));
+    click(toggle);
+    assert.strictEqual(submenu.hidden, false, 'Collapsing would hide the open report');
+    assert.strictEqual(toggle.getAttribute('aria-expanded'), 'true');
+
+    // Away from the reports, it collapses; opening it again shows Most Shared
+    click(document.querySelector('.nav-item[data-tab="overview"]'));
+    assert.ok(!toggle.classList.contains('has-active'));
+    click(toggle);
+    assert.strictEqual(submenu.hidden, true);
+    click(toggle);
+    await wait();
+    assert.strictEqual(submenu.hidden, false);
+    assert.ok(document.getElementById('tab-reports')!.classList.contains('active'));
+  });
+
+  test('a request that fails after the user moved on does not replace the newer view', async () => {
+    const original = responses['/api/reports/authors/7'];
+    // A slow request that ends in a network failure
+    responses['/api/reports/authors/7'] = () => new Promise((_, reject) => setTimeout(() => reject(new TypeError('Failed to fetch')), 60));
+    try {
+      click(document.querySelector('.nav-item[data-tab="reports-authors"]'));
+      await wait();
+      click(report().querySelector('[data-author-id="7"]'));
+      // Before it fails, go back to the author list
+      click(document.querySelector('.nav-item[data-tab="reports-authors"]'));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepStrictEqual(rows()[0], ['Zoe Writer', '3', '12']);
+      assert.doesNotMatch(report().textContent!, /Couldn't load/);
+    } finally {
+      responses['/api/reports/authors/7'] = original;
+    }
   });
 });
