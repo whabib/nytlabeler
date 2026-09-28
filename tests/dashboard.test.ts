@@ -336,9 +336,10 @@ describe('Reports page', () => {
     window.close();
   });
 
-  test('adds Reports to the sidebar and shows its page when clicked', () => {
+  test('adds Most Shared under Reports in the sidebar and shows its page when clicked', () => {
     const nav = document.querySelector('.nav-item[data-tab="reports"]')!;
-    assert.match(nav.textContent!, /Reports/);
+    assert.strictEqual(nav.textContent!.trim(), 'Most Shared');
+    assert.ok(nav.closest('#reports-submenu'));
     assert.ok(nav.classList.contains('active'));
     assert.ok(document.getElementById('tab-reports')!.classList.contains('active'));
     assert.ok(!document.getElementById('tab-overview')!.classList.contains('active'));
@@ -564,5 +565,136 @@ describe('NYT API attribution', () => {
   test('sits just above the connection status section', () => {
     const link = document.querySelector('.nyt-attribution')!;
     assert.ok(link.nextElementSibling!.classList.contains('sidebar-footer'));
+  });
+});
+
+describe('Reports › By Authors', () => {
+  let window: any;
+  let document: Document;
+  const responses: Record<string, unknown> = {
+    '/api/authors': [],
+    '/api/categories': { sections: [], subsections: [] },
+    '/api/stats': { env: 'development', dryRun: false },
+    '/api/reports/popular-articles': { generatedAt: '2026-09-28T16:00:00.000Z', windows: [] },
+    '/api/reports/authors': {
+      generatedAt: '2026-09-28T16:00:00.000Z',
+      authors: [
+        { id: 7, name: 'Zoe Writer', articles: 3, shares: 12 },
+        { id: 8, name: PAYLOAD, articles: 1, shares: 2 },
+        { id: `8" onmouseover="window.__xss = true`, name: 'Bad Id', articles: 1, shares: 1 },
+      ],
+    },
+    '/api/reports/authors/7': {
+      generatedAt: '2026-09-28T16:00:00.000Z',
+      author: { id: 7, name: 'Zoe Writer' },
+      articles: [
+        { id: 1, title: 'Middle', url: 'https://www.nytimes.com/middle.html', dateAdded: '2026-09-27T14:05:00.000Z', shares: 5 },
+        // 03:30 UTC on Sep 26 is the evening of Sep 25 in New York
+        { id: 2, title: 'Oldest', url: 'https://www.nytimes.com/oldest.html', dateAdded: '2026-09-26T03:30:00.000Z', shares: 5 },
+        { id: 3, title: PAYLOAD, url: 'javascript:window.__xss = true', dateAdded: '2026-09-28T12:00:00.000Z', shares: 2 },
+      ],
+    },
+    '/api/reports/authors/8': new Error('Failed to build the author report'),
+  };
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const click = (el: Element | null) => (el as HTMLElement).click();
+  const report = () => document.getElementById('authors-report')!;
+  const rows = () => [...report().querySelectorAll('tbody tr')].map((row) => [...row.querySelectorAll('td')].map((td) => td.textContent!.trim()));
+
+  before(async () => {
+    ({ window, document } = await loadDashboard(responses));
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('Reports is a group that opens on Most Shared, with By Authors beneath it', async () => {
+    const toggle = document.querySelector('#reports-nav .nav-group-toggle')!;
+    const submenu = document.getElementById('reports-submenu')!;
+    assert.strictEqual(toggle.getAttribute('aria-expanded'), 'false');
+    assert.strictEqual(submenu.hidden, true);
+    assert.deepStrictEqual([...submenu.querySelectorAll('.nav-item')].map((item) => item.textContent!.trim()), ['Most Shared', 'By Authors']);
+
+    click(toggle);
+    await wait();
+    assert.strictEqual(toggle.getAttribute('aria-expanded'), 'true');
+    assert.strictEqual(submenu.hidden, false);
+    assert.ok(document.getElementById('tab-reports')!.classList.contains('active'));
+    assert.ok(toggle.classList.contains('has-active'));
+  });
+
+  test('By Authors lists each author with their articles and shares', async () => {
+    click(document.querySelector('.nav-item[data-tab="reports-authors"]'));
+    await wait();
+    assert.ok(document.getElementById('tab-reports-authors')!.classList.contains('active'));
+    assert.ok(!document.getElementById('tab-reports')!.classList.contains('active'));
+    const headers = [...report().querySelectorAll('th')].map((th) => th.textContent!.trim());
+    assert.deepStrictEqual(headers, ['Author Name', 'Number of Articles', 'Number of Shares']);
+    assert.deepStrictEqual(rows(), [['Zoe Writer', '3', '12'], [PAYLOAD, '1', '2'], ['Bad Id', '1', '1']]);
+    assert.match(document.getElementById('authors-updated')!.textContent!, /^Updated 12:00:00 PM ET$/);
+  });
+
+  test('renders names as text, and only makes authors with valid ids clickable', () => {
+    assert.strictEqual(injectedImages(document).length, 0);
+    assert.strictEqual(document.querySelectorAll('[onerror], [onmouseover]').length, 0);
+    const clickable = [...report().querySelectorAll('[data-author-id]')].map((el) => el.getAttribute('data-author-id'));
+    assert.deepStrictEqual(clickable, ['7', '8']);
+  });
+
+  test("clicking an author shows their articles, most shared first, dated in New York time", async () => {
+    click(report().querySelector('[data-author-id="7"]'));
+    await wait();
+    assert.strictEqual(report().querySelector('h3')!.textContent, 'Zoe Writer');
+    const headers = [...report().querySelectorAll('th')].map((th) => th.textContent!.trim());
+    assert.deepStrictEqual(headers, ['Article Title', 'Date Published', 'Number of Shares ▼']);
+    // Ties on shares go to the newer article
+    assert.deepStrictEqual(rows(), [
+      ['Middle', 'Sep 27, 2026', '5'],
+      ['Oldest', 'Sep 25, 2026', '5'],
+      [PAYLOAD, 'Sep 28, 2026', '2'],
+    ]);
+    const link = report().querySelector('tbody a')!;
+    assert.strictEqual(link.getAttribute('href'), 'https://www.nytimes.com/middle.html');
+    assert.strictEqual(link.getAttribute('target'), '_blank');
+    // A non-web URL gets no link
+    assert.strictEqual(report().querySelectorAll('tbody a').length, 2);
+    assert.strictEqual(window.__xss, undefined);
+  });
+
+  test('sorts by date or shares, flipping direction on a second click', () => {
+    const sortBy = (key: string) => click(report().querySelector(`[data-sort="${key}"]`));
+    const titles = () => rows().map((row) => row[0]);
+    const ariaSort = (key: string) => report().querySelector(`[data-sort="${key}"]`)!.closest('th')!.getAttribute('aria-sort');
+
+    sortBy('date');
+    assert.deepStrictEqual(titles(), [PAYLOAD, 'Middle', 'Oldest']);
+    assert.deepStrictEqual([ariaSort('date'), ariaSort('shares')], ['descending', 'none']);
+
+    sortBy('date');
+    assert.deepStrictEqual(titles(), ['Oldest', 'Middle', PAYLOAD]);
+    assert.strictEqual(ariaSort('date'), 'ascending');
+
+    sortBy('shares');
+    assert.deepStrictEqual(titles(), ['Middle', 'Oldest', PAYLOAD]);
+    sortBy('shares');
+    // Ties always go to the newer article
+    assert.deepStrictEqual(titles(), [PAYLOAD, 'Middle', 'Oldest']);
+    assert.strictEqual(ariaSort('shares'), 'ascending');
+  });
+
+  test('goes back to the author list', async () => {
+    click(report().querySelector('[data-action="all-authors"]'));
+    await wait();
+    assert.deepStrictEqual(rows()[0], ['Zoe Writer', '3', '12']);
+  });
+
+  test("shows an error when an author's articles fail to load, with a way back", async () => {
+    click(report().querySelector('[data-author-id="8"]'));
+    await wait();
+    assert.match(report().textContent!, /Couldn't load this author's articles/);
+    click(report().querySelector('[data-action="all-authors"]'));
+    await wait();
+    assert.strictEqual(rows().length, 3);
   });
 });

@@ -364,6 +364,67 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should serve the authors report and one author\'s articles', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    const queries: any[][] = [];
+    metricsPool.query = (async (sql: string, params: any[] = []) => {
+      queries.push(params);
+      if (sql.includes('FROM "Author" WHERE id')) return { rows: params[0] === 7 ? [{ id: 7, name: 'Zoe Writer' }] : [] };
+      if (sql.includes('WHERE j."B" = $1')) {
+        return { rows: [{ id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', date_created: new Date('2026-09-26T03:30:00Z'), shares: 4 }] };
+      }
+      return { rows: [{ id: 7, name: 'Zoe Writer', articles: 2, shares: 7 }] };
+    }) as any;
+    resetReportCache();
+    try {
+      const list = await fetch('http://127.0.0.1:14100/api/reports/authors');
+      assert.strictEqual(list.status, 200);
+      assert.deepStrictEqual((await list.json()).authors, [{ id: 7, name: 'Zoe Writer', articles: 2, shares: 7 }]);
+
+      const author = await fetch('http://127.0.0.1:14100/api/reports/authors/7');
+      assert.strictEqual(author.status, 200);
+      const report = await author.json();
+      assert.deepStrictEqual(report.author, { id: 7, name: 'Zoe Writer' });
+      assert.deepStrictEqual(report.articles, [
+        { id: 1, title: 'One', url: 'https://www.nytimes.com/one.html', dateAdded: '2026-09-26T03:30:00.000Z', shares: 4 },
+      ]);
+
+      const unknown = await fetch('http://127.0.0.1:14100/api/reports/authors/8');
+      assert.strictEqual(unknown.status, 404);
+    } finally {
+      metricsPool.query = originalQuery;
+      resetReportCache();
+    }
+  }));
+
+  test('should reject author ids that are not positive 32-bit integers, without querying', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    let queried = false;
+    metricsPool.query = (async () => { queried = true; return { rows: [] }; }) as any;
+    try {
+      for (const id of ['abc', '0', '-1', '1.5', '01', '2147483648', '99999999999', '1%20OR%201=1']) {
+        const res = await fetch(`http://127.0.0.1:14100/api/reports/authors/${id}`);
+        assert.strictEqual(res.status, 400, `id ${id}`);
+      }
+      assert.strictEqual(queried, false);
+    } finally {
+      metricsPool.query = originalQuery;
+    }
+  }));
+
+  test('should return 500 when the authors report fails', cleanErrors(async () => {
+    const originalQuery = metricsPool.query;
+    metricsPool.query = (async () => { throw new Error('statement timeout'); }) as any;
+    resetReportCache();
+    try {
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors')).status, 500);
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors/7')).status, 500);
+    } finally {
+      metricsPool.query = originalQuery;
+      resetReportCache();
+    }
+  }));
+
   test('should return empty reports without a LabelerServer (dry-run)', cleanErrors(async () => {
     const originalQuery = metricsPool.query;
     let queried = false;
@@ -375,6 +436,9 @@ describe('WebSocket Protocol Proxy', () => {
       const report = await res.json();
       assert.strictEqual(report.windows.length, 4);
       assert.ok(report.windows.every((w: any) => w.articles.length === 0));
+      const authors = await fetch('http://127.0.0.1:14100/api/reports/authors');
+      assert.deepStrictEqual((await authors.json()).authors, []);
+      assert.strictEqual((await fetch('http://127.0.0.1:14100/api/reports/authors/7')).status, 404);
       assert.strictEqual(queried, false, 'No share table exists in dry-run mode');
     } finally {
       metricsPool.query = originalQuery;

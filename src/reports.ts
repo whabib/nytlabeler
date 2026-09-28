@@ -55,34 +55,123 @@ async function popularArticles(interval: string, limit: number): Promise<Popular
   }));
 }
 
-let cached: { report: PopularArticlesReport; at: number } | null = null;
-let inFlight: Promise<PopularArticlesReport> | null = null;
+// Reports are reused for REPORT_CACHE_MS, since the dashboard is public, and concurrent
+// requests for the same report share one set of queries. Failures aren't cached.
+const MAX_CACHED_REPORTS = 200;
+const cache = new Map<string, { value: unknown; at: number }>();
+const inFlight = new Map<string, Promise<unknown>>();
 
-/**
- * The most shared articles for each report period. The dashboard is public, so a report is
- * reused for REPORT_CACHE_MS and concurrent requests share one set of queries.
- */
-export async function fetchPopularArticlesReport(now = Date.now()): Promise<PopularArticlesReport> {
-  if (cached && now - cached.at < REPORT_CACHE_MS) return cached.report;
-  if (!inFlight) {
-    inFlight = (async () => {
-      const windows = [];
-      // One at a time: the metrics pool has a single connection
-      for (const window of REPORT_WINDOWS) {
-        windows.push({ key: window.key, label: window.label, articles: await popularArticles(window.interval, REPORT_LIMIT) });
-      }
-      const report = { generatedAt: new Date(now).toISOString(), windows };
-      cached = { report, at: now };
-      return report;
-    })().finally(() => {
-      inFlight = null;
-    });
+function cachedReport<T>(key: string, now: number, build: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key);
+  if (hit && now - hit.at < REPORT_CACHE_MS) return Promise.resolve(hit.value as T);
+  let pending = inFlight.get(key) as Promise<T> | undefined;
+  if (!pending) {
+    pending = build()
+      .then((value) => {
+        cache.delete(key);
+        // Many authors can be looked up, so the oldest reports make room
+        if (cache.size >= MAX_CACHED_REPORTS) cache.delete(cache.keys().next().value!);
+        cache.set(key, { value, at: now });
+        return value;
+      })
+      .finally(() => inFlight.delete(key));
+    inFlight.set(key, pending);
   }
-  return inFlight;
+  return pending;
 }
 
-/** Clears the cached report. Useful for tests. */
+/** The most shared articles for each report period. */
+export function fetchPopularArticlesReport(now = Date.now()): Promise<PopularArticlesReport> {
+  return cachedReport('popular-articles', now, async () => {
+    const windows = [];
+    // One at a time: the metrics pool has a single connection
+    for (const window of REPORT_WINDOWS) {
+      windows.push({ key: window.key, label: window.label, articles: await popularArticles(window.interval, REPORT_LIMIT) });
+    }
+    return { generatedAt: new Date(now).toISOString(), windows };
+  });
+}
+
+export interface AuthorShares {
+  id: number;
+  name: string;
+  /** Distinct articles by this author that were shared. */
+  articles: number;
+  /** Posts that shared any of those articles. An article with two authors counts for both. */
+  shares: number;
+}
+
+export interface AuthorsReport {
+  generatedAt: string;
+  authors: AuthorShares[];
+}
+
+/** Every author with a shared article, most shared first, since recording began. */
+export function fetchAuthorsReport(now = Date.now()): Promise<AuthorsReport> {
+  return cachedReport('authors', now, async () => {
+    const { rows } = await metricsPool.query(
+      `SELECT au.id, au.name, COUNT(DISTINCT pa.article_id)::int AS articles, COUNT(*)::int AS shares
+       FROM ${POST_ARTICLES_TABLE} pa
+       JOIN "_ArticleToAuthor" j ON j."A" = pa.article_id
+       JOIN "Author" au ON au.id = j."B"
+       GROUP BY au.id, au.name
+       ORDER BY shares DESC, au.name, au.id`,
+    );
+    return {
+      generatedAt: new Date(now).toISOString(),
+      authors: rows.map((row) => ({ id: row.id, name: row.name, articles: row.articles, shares: row.shares })),
+    };
+  });
+}
+
+export interface AuthorArticle {
+  id: number;
+  title: string | null;
+  url: string;
+  /** When nytdata first recorded the article from the Top Stories feed (it has no published date). */
+  dateAdded: string;
+  shares: number;
+}
+
+export interface AuthorReport {
+  generatedAt: string;
+  author: { id: number; name: string };
+  articles: AuthorArticle[];
+}
+
+/** An author's shared articles, most shared first; null for an unknown author. */
+export function fetchAuthorReport(authorId: number, now = Date.now()): Promise<AuthorReport | null> {
+  return cachedReport(`author:${authorId}`, now, async () => {
+    const author = await metricsPool.query('SELECT id, name FROM "Author" WHERE id = $1', [authorId]);
+    if (author.rows.length === 0) return null;
+    const { rows } = await metricsPool.query(
+      // date_created is a TIMESTAMP without time zone holding UTC; mark it as UTC so it
+      // doesn't depend on this process's time zone
+      `SELECT a.id, a.title, a.url, a.date_created AT TIME ZONE 'UTC' AS date_created, COUNT(*)::int AS shares
+       FROM "_ArticleToAuthor" j
+       JOIN "Article" a ON a.id = j."A"
+       JOIN ${POST_ARTICLES_TABLE} pa ON pa.article_id = a.id
+       WHERE j."B" = $1
+       GROUP BY a.id
+       ORDER BY shares DESC, a.date_created DESC, a.id`,
+      [authorId],
+    );
+    return {
+      generatedAt: new Date(now).toISOString(),
+      author: { id: author.rows[0].id, name: author.rows[0].name },
+      articles: rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        url: row.url,
+        dateAdded: new Date(row.date_created).toISOString(),
+        shares: row.shares,
+      })),
+    };
+  });
+}
+
+/** Clears cached reports. Useful for tests. */
 export function resetReportCache(): void {
-  cached = null;
-  inFlight = null;
+  cache.clear();
+  inFlight.clear();
 }

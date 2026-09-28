@@ -46,9 +46,16 @@
         <button class="nav-item" data-tab="history">
           <span class="nav-icon">📜</span> Label History
         </button>
-        <button class="nav-item" data-tab="reports">
-          <span class="nav-icon">📈</span> Reports
-        </button>
+        <!-- Reports: a group whose items each open a report -->
+        <div class="nav-group" id="reports-nav">
+          <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="reports-submenu">
+            <span class="nav-icon">📈</span> Reports <span class="nav-caret" aria-hidden="true">▸</span>
+          </button>
+          <div class="nav-submenu" id="reports-submenu" hidden>
+            <button type="button" class="nav-item nav-subitem" data-tab="reports">Most Shared</button>
+            <button type="button" class="nav-item nav-subitem" data-tab="reports-authors">By Authors</button>
+          </div>
+        </div>
         <button class="nav-item" data-tab="settings">
           <span class="nav-icon">⚙️</span> Settings
         </button>
@@ -276,6 +283,24 @@
 
         <div class="reports-list" id="reports-list">
           <!-- Dynamically populated -->
+        </div>
+      </section>
+
+      <!-- Tab: Reports › By Authors -->
+      <section class="tab-pane" id="tab-reports-authors">
+        <header class="tab-header">
+          <div>
+            <h2>By Authors</h2>
+            <p>Authors of the NYT articles linked in labeled Bluesky posts, since recording began on September 26, 2026. An article with several authors counts for each of them.</p>
+          </div>
+          <div class="history-controls">
+            <span class="reports-updated" id="authors-updated"></span>
+            <button type="button" class="action-btn" id="authors-refresh">Refresh</button>
+          </div>
+        </header>
+
+        <div id="authors-report">
+          <!-- Dynamically populated: the author list, or one author's articles -->
         </div>
       </section>
 

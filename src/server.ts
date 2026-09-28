@@ -8,7 +8,7 @@ import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } f
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
-import { fetchPopularArticlesReport, REPORT_WINDOWS } from './reports.js';
+import { fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, REPORT_WINDOWS } from './reports.js';
 import { refreshDatabaseStatus, DB_CHECK_INTERVAL_MS } from './db-health.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -374,6 +374,49 @@ app.get('/api/reports/popular-articles', async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to build the popular articles report:', error);
     res.status(500).json({ error: 'Failed to build the popular articles report' });
+  }
+});
+
+// Authors whose articles were shared, for the Reports page
+app.get('/api/reports/authors', async (req, res) => {
+  // Shares are only recorded alongside published labels, so dry-run mode has none
+  if (!labelerServer) {
+    res.json({ generatedAt: new Date().toISOString(), authors: [] });
+    return;
+  }
+  try {
+    await labelStoreReady;
+    res.json(await fetchAuthorsReport());
+  } catch (error) {
+    console.error('❌ Failed to build the authors report:', error);
+    res.status(500).json({ error: 'Failed to build the authors report' });
+  }
+});
+
+// One author's shared articles
+app.get('/api/reports/authors/:authorId', async (req, res) => {
+  // "Author".id is a positive 32-bit integer
+  const { authorId } = req.params;
+  const id = /^[1-9][0-9]{0,9}$/.test(authorId) ? Number(authorId) : NaN;
+  if (!(id <= 2147483647)) {
+    res.status(400).json({ error: 'Invalid author id' });
+    return;
+  }
+  if (!labelerServer) {
+    res.status(404).json({ error: 'No shares are recorded in dry-run mode' });
+    return;
+  }
+  try {
+    await labelStoreReady;
+    const report = await fetchAuthorReport(id);
+    if (!report) {
+      res.status(404).json({ error: 'Author not found' });
+      return;
+    }
+    res.json(report);
+  } catch (error) {
+    console.error('❌ Failed to build the report for author %d:', id, error);
+    res.status(500).json({ error: 'Failed to build the author report' });
   }
 });
 
