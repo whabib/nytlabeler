@@ -34,6 +34,12 @@ export interface LeaderElectionOptions {
   yieldGraceMs?: number;
   /** After asking for a handoff, how often to try the lock, a few times, before the usual retry. */
   handoffPollMs?: number;
+  /**
+   * When stepping down, runs after onLose and before the lock is released, e.g. to let work
+   * already under way finish so the old and new leader never overlap. It should settle
+   * promptly (it holds up the handoff); if it rejects, the connection is closed instead.
+   */
+  beforeRelease?: () => Promise<void>;
 }
 
 /** A standby's request for the leader to step down. */
@@ -210,6 +216,7 @@ export class LeaderElection {
         `🤝 [LEADER] Stepping down for ${this.options.lockKey}: newer instance ${request.instanceId} ` +
           `(started ${new Date(request.startedAt).toISOString()}) takes over from ${this.instanceId}`,
       );
+      await this.options.beforeRelease?.();
       await client.query(`UNLISTEN "${this.options.handoffChannel}"`);
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [this.options.lockKey]);
     } catch (err) {
