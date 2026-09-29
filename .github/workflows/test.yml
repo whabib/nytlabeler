@@ -70,7 +70,9 @@ jobs:
       - name: Check it's hardened (non-root, no shell)
         run: |
           user=$(docker image inspect nytlabeler:ci --format '{{.Config.User}}')
-          if [ -z "$user" ] || [ "$user" = "0" ] || [ "$user" = "root" ]; then
+          # The user part only: "0:1000" and "root:root" still run as root
+          uid=${user%%:*}
+          if [ -z "$uid" ] || [ "$uid" = "0" ] || [ "$uid" = "root" ]; then
             echo "::error::The image runs as root"
             exit 1
           fi
