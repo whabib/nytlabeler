@@ -220,6 +220,8 @@ describe('Firehose leadership', () => {
     connections[0].terminate();
     await waitFor(() => connectionUrls.length === 2 && open().length === 1, 4000);
     assert.strictEqual(cursorOf(1), String(lastEventUs - RESUME_REWIND_US));
+    // The dashboard reports the URL it actually connected to
+    assert.strictEqual(new URL(stats.activeEndpoint).searchParams.get('cursor'), String(lastEventUs - RESUME_REWIND_US));
 
     // Jetstream replays the posts from the rewind, then sends one that was missed
     sendNytPost(open()[0], 'resume-before', undefined, lastEventUs - 1_000_000);

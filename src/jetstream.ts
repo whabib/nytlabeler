@@ -254,7 +254,6 @@ function connect() {
   if (!url.searchParams.has('wantedCollections')) {
     url.searchParams.set('wantedCollections', WANTED_COLLECTION);
   }
-  stats.activeEndpoint = url.toString();
 
   // Reconnecting after a drop: replay what was missed instead of starting live
   if (resumeCursorUs !== null) {
@@ -269,6 +268,8 @@ function connect() {
 
   const finalUrl = url.toString();
   console.log(`📡 Connecting to Jetstream firehose at: ${finalUrl}`);
+  // The URL actually connected to, cursor included (the dashboard shows it on hover)
+  stats.activeEndpoint = finalUrl;
 
   socket = new WebSocket(finalUrl);
 
