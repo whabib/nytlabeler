@@ -15,6 +15,29 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 // under an earlier generation are dropped instead of labeled.
 let leaderGeneration = 0;
 
+// Posts being labeled right now, past the leadership check. A leader handing over waits for
+// them before releasing the lock, so the old and new leader never publish at the same time.
+let labelingInFlight = 0;
+let labelingDrained: (() => void)[] = [];
+let handoffDrainTimeoutMs = 10_000;
+
+/** Resolves once no post is being labeled, or after the timeout (the handoff goes ahead). */
+function waitForLabelingToFinish(timeoutMs: number): Promise<void> {
+  if (labelingInFlight === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      labelingDrained = labelingDrained.filter((waiter) => waiter !== finish);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      console.warn(`⚠️ [LEADER] ${labelingInFlight} post(s) still being labeled after ${timeoutMs} ms; handing over anyway.`);
+      finish();
+    }, timeoutMs);
+    labelingDrained.push(finish);
+  });
+}
+
 // Regex to detect standard NY Times links in text (handles subdomains and is case-insensitive)
 const NYT_REGEX = /https?:\/\/(?:[a-z0-9-]+\.)?nytimes\.com\/[^\s"']+/gi;
 
@@ -104,11 +127,19 @@ let createLeaderClient: () => LeaderClient = () =>
   new pg.Client({ connectionString: DATABASE_URL, keepAlive: true });
 let leaderRetryMs = 10_000;
 
+/** Channel on which a newer instance asks the leader to hand over (see LeaderElection). */
+export const HANDOFF_CHANNEL = `nytlabeler_firehose_handoff_${ENV.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`.slice(0, 63);
+
 function getLeadership(): LeaderElection {
   leadership ??= new LeaderElection({
     lockKey: `nytlabeler:firehose:${ENV}`,
     createClient: createLeaderClient,
     retryMs: leaderRetryMs,
+    // The newest instance takes over: after a deploy or an instance replacement, the old
+    // instance can run for up to the request timeout, but new traffic goes to the new one
+    handoffChannel: HANDOFF_CHANNEL,
+    instanceId: `${process.env.K_REVISION ?? 'local'}/${Math.random().toString(36).slice(2, 8)}`,
+    startedAt: Date.parse(stats.startTime),
     onAcquire: () => {
       leaderGeneration++;
       stats.firehoseLeader = true;
@@ -125,6 +156,8 @@ function getLeadership(): LeaderElection {
       stats.firehoseLeader = false;
       closeSocket();
     },
+    // Handing over: let posts already being labeled finish first
+    beforeRelease: () => waitForLabelingToFinish(handoffDrainTimeoutMs),
     // Dashboard toggles may reach any instance; the leader follows the saved setting
     onLeaderTick: syncWithSavedSetting,
   });
@@ -156,11 +189,12 @@ async function syncWithSavedSetting() {
  * Overrides how the leadership connection is made and how often it retries, discarding
  * any current election. Useful for unit testing.
  */
-export async function configureFirehoseLeadership(options: { createClient: () => LeaderClient; retryMs: number }) {
+export async function configureFirehoseLeadership(options: { createClient: () => LeaderClient; retryMs: number; drainTimeoutMs?: number }) {
   await leadership?.stop();
   leadership = null;
   createLeaderClient = options.createClient;
   leaderRetryMs = options.retryMs;
+  handoffDrainTimeoutMs = options.drainTimeoutMs ?? 10_000;
 }
 
 /**
@@ -264,11 +298,16 @@ function connect() {
         }
         if (articles.size === 0) return;
 
-        // One call per post, so each label value is issued at most once
+        // One call per post, so each label value is issued at most once. Counted from the
+        // leadership check above (no await in between) until its labels are written.
+        labelingInFlight++;
         try {
           await issueLabelsForPost(postUri, authorDid, postText, [...articles.values()]);
         } catch (err) {
           console.error('❌ Error labeling post %s:', postUri, err);
+        } finally {
+          labelingInFlight--;
+          if (labelingInFlight === 0) for (const done of labelingDrained.slice()) done();
         }
       }
     }

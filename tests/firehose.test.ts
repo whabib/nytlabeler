@@ -6,7 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 // Point the firehose at a local mock Jetstream BEFORE importing the module
 process.env.FIREHOSE_URL = 'ws://127.0.0.1:14301/subscribe';
 
-const { startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership } = await import('../src/jetstream.js');
+const { startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, HANDOFF_CHANNEL } = await import('../src/jetstream.js');
 const { stats, setLabelerServer } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 
@@ -51,6 +51,8 @@ describe('Firehose leadership', () => {
   // Test-controlled database state
   let savedSetting: string | null = 'true';
   let lookupDelayMs = 0;
+  let labelDelayMs = 0; // How long each createLabel takes; Infinity waits until released
+  const stuckLabels: (() => void)[] = [];
   let lookups = 0;
   let lockFree = false;
   let clients: FakeClient[] = [];
@@ -81,6 +83,8 @@ describe('Firehose leadership', () => {
 
     setLabelerServer({
       createLabel: async (label: any) => {
+        if (labelDelayMs === Infinity) await new Promise<void>((resolve) => stuckLabels.push(resolve));
+        if (labelDelayMs) await wait(labelDelayMs);
         created.push(label.val);
         return { id: created.length, ...label };
       },
@@ -90,6 +94,7 @@ describe('Firehose leadership', () => {
   beforeEach(async () => {
     savedSetting = 'true';
     lookupDelayMs = 0;
+    labelDelayMs = 0;
     lookups = 0;
     lockFree = false;
     clients = [];
@@ -101,6 +106,7 @@ describe('Firehose leadership', () => {
         return client;
       },
       retryMs: 20,
+      drainTimeoutMs: 300,
     });
   });
 
@@ -159,6 +165,93 @@ describe('Firehose leadership', () => {
 
     lockFree = true;
     await waitFor(() => open().length === 1 && stats.firehoseConnected);
+  });
+
+  test('hands the firehose to a newer instance: disconnects before releasing the lock', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    const client = clients[clients.length - 1];
+    const queries: string[] = [];
+    const originalQuery = client.query.bind(client);
+    client.query = async (text: string) => {
+      // The Jetstream connection must already be closing when the lock is released
+      if (text.includes('pg_advisory_unlock')) queries.push(`unlock (leader: ${stats.firehoseLeader}, socket open: ${open().length > 0 && stats.firehoseConnected})`);
+      return originalQuery(text);
+    };
+
+    // An older instance's request changes nothing
+    client.emit('notification', { channel: HANDOFF_CHANNEL, payload: JSON.stringify({ instanceId: 'older', startedAt: 0 }) });
+    await wait(50);
+    assert.strictEqual(stats.firehoseLeader, true);
+    assert.strictEqual(open().length, 1);
+
+    // A newer one takes over; this instance stops and stays on standby
+    lockFree = false; // The newer instance holds the lock from here on
+    const closed = new Promise<void>((resolve) => connections[0].once('close', () => resolve()));
+    client.emit('notification', { channel: HANDOFF_CHANNEL, payload: JSON.stringify({ instanceId: 'newer', startedAt: Date.now() + 60_000 }) });
+    await closed;
+    assert.strictEqual(stats.firehoseLeader, false);
+    assert.strictEqual(stats.firehoseEnabled, true, 'The listener stays enabled for when it leads again');
+    assert.deepStrictEqual(queries, ['unlock (leader: false, socket open: false)']);
+    await wait(100);
+    assert.strictEqual(open().length, 0, 'It must not reconnect while on standby');
+  });
+
+  /** Sends the leader a step-down request from a newer instance; resolves with what happened, in order. */
+  async function handOverWhileLabeling() {
+    const client = clients[clients.length - 1];
+    const order: string[] = [];
+    const originalQuery = client.query.bind(client);
+    client.query = async (text: string) => {
+      if (text.includes('pg_advisory_unlock')) order.push(`unlock (labels written: ${created.length})`);
+      return originalQuery(text);
+    };
+    lockFree = false; // The newer instance holds the lock from here on
+    client.emit('notification', { channel: HANDOFF_CHANNEL, payload: JSON.stringify({ instanceId: 'newer', startedAt: Date.now() + 60_000 }) });
+    return order;
+  }
+
+  test('on handoff, lets a post already being labeled finish before releasing the lock', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    labelDelayMs = 150;
+    sendNytPost(open()[0], 'drain-1');
+    await waitFor(() => lookups === 1); // Past the lookup; now writing its label
+    await wait(20);
+
+    const order = await handOverWhileLabeling();
+    await waitFor(() => order.length === 1);
+    assert.deepStrictEqual(order, ['unlock (labels written: 1)'], 'The label was written before the lock was released');
+    assert.strictEqual(stats.firehoseLeader, false);
+  });
+
+  test('on handoff, stops waiting for stuck labeling after the drain timeout', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    labelDelayMs = Infinity;
+    sendNytPost(open()[0], 'drain-stuck');
+    await waitFor(() => lookups === 1);
+    await wait(20);
+
+    try {
+      const startedAt = Date.now();
+      const order = await handOverWhileLabeling();
+      await waitFor(() => order.length === 1, 2000);
+      const waited = Date.now() - startedAt;
+      assert.ok(waited >= 250 && waited < 1500, `Released after ${waited} ms (timeout 300 ms)`);
+    } finally {
+      // Let the stuck write finish, so no labeling is left in flight for later tests
+      for (const release of stuckLabels.splice(0)) release();
+      await waitFor(() => created.length === 1);
+    }
+  });
+
+  test('uses a handoff channel that is a plain Postgres identifier', () => {
+    assert.match(HANDOFF_CHANNEL, /^nytlabeler_firehose_handoff_[a-z0-9_]+$/);
+    assert.ok(HANDOFF_CHANNEL.length <= 63);
   });
 
   test('never opens a second subscription when leadership is regained during a pending reconnect', async () => {
