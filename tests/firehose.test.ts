@@ -55,10 +55,10 @@ describe('Firehose leadership', () => {
   // Test-controlled database state
   let savedSetting: string | null = 'true';
   let lookupDelayMs = 0;
-  let labelDelayMs = 0;
+  let labelDelayMs = 0; // How long each createLabel takes; Infinity waits until released
   // While set, the fake Jetstream holds new handshakes, leaving the client connecting
   let holdHandshakes = false;
-  const heldHandshakes: ((accept: boolean, code?: number) => void)[] = []; // How long each createLabel takes; Infinity waits until released
+  const heldHandshakes: ((accept: boolean, code?: number) => void)[] = [];
   const stuckLabels: (() => void)[] = [];
   let lookups = 0;
   let lockFree = false;
