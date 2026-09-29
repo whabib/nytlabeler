@@ -55,3 +55,55 @@ jobs:
           DRY_RUN: 'true'
           ENV: 'development'
           TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+
+  image:
+    name: Check the container image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Build the image
+        run: docker build -t nytlabeler:ci .
+
+      - name: Check it's hardened (non-root, no shell)
+        run: |
+          user=$(docker image inspect nytlabeler:ci --format '{{.Config.User}}')
+          # The user part only: "0:1000" and "root:root" still run as root
+          uid=${user%%:*}
+          if [ -z "$uid" ] || [ "$uid" = "0" ] || [ "$uid" = "root" ]; then
+            echo "::error::The image runs as root"
+            exit 1
+          fi
+          if docker run --rm --entrypoint /bin/sh nytlabeler:ci -c true 2>/dev/null; then
+            echo "::error::The image contains a shell"
+            exit 1
+          fi
+          echo "Runs as user $user, with no shell"
+
+      - name: Check the app and its native module load
+        run: >-
+          docker run --rm nytlabeler:ci node -e
+          'import("labeler").then(() => require("@libsql/client").createClient({ url: ":memory:" }).execute("select 1 as ok")).then((r) => console.log("labeler + libsql load:", JSON.stringify(r.rows[0])))'
+
+      - name: Check the dashboard starts
+        run: |
+          # Dry run, with no database or firehose reachable: it must still serve the dashboard
+          docker run -d --name smoke -p 4100:4100 -e DRY_RUN=true -e ENV=development \
+            -e DATABASE_URL=postgresql://nobody@127.0.0.1:1/none -e FIREHOSE_URL=ws://127.0.0.1:9/subscribe nytlabeler:ci
+          for _ in $(seq 30); do curl -fsS http://127.0.0.1:4100/api/stats >/dev/null 2>&1 && break; sleep 1; done
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4100/api/stats)
+          docker logs smoke | tail -20
+          docker rm -f smoke
+          if [ "$status" != "200" ]; then
+            echo "::error::The dashboard didn't start (HTTP $status)"
+            exit 1
+          fi
+
+      - name: Scan for vulnerabilities
+        run: |
+          # Fail on any critical or high finding; list mediums and lows without failing
+          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 image --no-progress --scanners vuln "$@" nytlabeler:ci; }
+          scan --severity CRITICAL,HIGH --exit-code 1
+          scan --severity MEDIUM,LOW --exit-code 0
