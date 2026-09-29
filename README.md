@@ -4,8 +4,10 @@ An automated, custom social media post labeler for the AT Protocol (Bluesky) soc
 
 It includes a monitoring dashboard and a automated publishing workflow, designed for containerization and deployment to Google Cloud Run.
 
-I won't say I vibe-coded this because I paid careful attention to what it was done, but I did use Google Gemini to develop this. Realistically it would not have happened without it because I don't think I would have wanted to invest the time. It was also an interesting learning experience of both the pros and cons to this approach, and I'm
+I won't say I vibe-coded this because I paid careful attention to what was done, but I did use Google Gemini to develop this. Realistically it would not have happened without it because I don't think I would have wanted to invest the time. It was also an interesting learning experience of both the pros and cons to this approach, and I'm
 happy to discuss that. It definitely did some dumb things (that are still in here and I would fix if I had all day). But in general, I would not have delved as deeply in the ATProto docs and websocket programming myself and I do think this could be useful.
+
+Most recent work has moved from Gemini to Claude Opus 5.5, pairing with Github Copilot reviews (which had many good comments). I didn't dislike Claude, but Google's Developer Program is a confusing mess and particularly hostile towards individual developers.
 
 ---
 
