@@ -64,6 +64,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
+      # Docker Hardened Images (dhi.io) require a Docker login, even for the free images
+      - name: Log in to dhi.io
+        env:
+          DHI_USERNAME: ${{ vars.DHI_USERNAME }}
+          DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+        run: |
+          if [ -z "$DHI_USERNAME" ] || [ -z "$DHI_TOKEN" ]; then
+            echo "::warning::DHI_USERNAME or DHI_TOKEN isn't available (e.g. a fork's pull request); building without logging in"
+            exit 0
+          fi
+          printf '%s' "$DHI_TOKEN" | docker login dhi.io --username "$DHI_USERNAME" --password-stdin
+
       - name: Build the image
         run: docker build -t nytlabeler:ci .
 

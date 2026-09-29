@@ -1,0 +1,39 @@
+# Builds the labeler image in Cloud Build and pushes it (used by deploy.sh).
+#
+# The Dockerfile's base images come from Docker Hardened Images (dhi.io), which requires a
+# Docker login even for these free images. The token (a Docker personal access token with
+# public-repo read-only access) is kept in Secret Manager as DOCKER_DHI_TOKEN; the build's
+# service account needs roles/secretmanager.secretAccessor on it.
+#
+# Their layers are zstd-compressed, which Cloud Build's Docker daemon (20.10) can't unpack.
+# So the build runs in BuildKit (docker buildx), which pushes straight to the registry,
+# recompressing every layer as gzip, as a single image without attestations.
+#
+# Substitutions (deploy.sh passes both):
+#   _IMAGE          image to build and push, e.g. gcr.io/<project>/nyt-labeler-dev:latest
+#   _DHI_USERNAME   the Docker account the token belongs to
+steps:
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # The same read-only token also avoids Docker Hub's anonymous rate limit when pulling
+        # BuildKit's own image on Cloud Build's shared addresses
+        for registry in dhi.io docker.io; do
+          printf '%s' "$$DHI_TOKEN" | docker login "$$registry" --username "$$DHI_USERNAME" --password-stdin
+        done
+        docker buildx create --name dhi --driver docker-container --use
+        docker buildx build --provenance=false --sbom=false \
+          --output "type=image,name=$$IMAGE,push=true,compression=gzip,force-compression=true" .
+    env:
+      - DHI_USERNAME=${_DHI_USERNAME}
+      - IMAGE=${_IMAGE}
+    secretEnv:
+      - DHI_TOKEN
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/DOCKER_DHI_TOKEN/versions/latest
+      env: DHI_TOKEN

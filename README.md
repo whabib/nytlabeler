@@ -303,6 +303,26 @@ gh api -X POST repos/whabib/nytlabeler/rulesets --input - <<'JSON'
 JSON
 ```
 
+**Docker Hardened Images login.** The Dockerfile's base images come from `dhi.io`, which requires a Docker login even for the free images. Builds use a Docker personal access token with **Public Repo Read-only** access. It's kept in three places, and never in the repository:
+
+- **Secret Manager `DOCKER_DHI_TOKEN`:** Cloud Build reads it through `cloudbuild.yaml`, for `deploy.sh` and releases.
+- **GitHub secret `DHI_TOKEN`:** CI's image check reads it.
+- **Account name:** `DHI_USERNAME` (`whabib`), as a GitHub repository variable. `deploy.sh` defaults to it, and you can override it in `.env`.
+
+```bash
+# Store the token (paste it, then press Enter and Ctrl-D)
+gcloud secrets create DOCKER_DHI_TOKEN --project=$PROJECT_ID --data-file=-
+# Let Cloud Build's service account read it
+gcloud secrets add-iam-policy-binding DOCKER_DHI_TOKEN --project=$PROJECT_ID \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor
+# The same token for CI, copied without being shown
+gcloud secrets versions access latest --secret=DOCKER_DHI_TOKEN --project=$PROJECT_ID | gh secret set DHI_TOKEN
+gh variable set DHI_USERNAME --body "<docker account>"
+```
+
+To rotate the token, add a new version to the secret and set `DHI_TOKEN` again.
+
 ---
 
 ## 📁 Repository Exclusion Configuration

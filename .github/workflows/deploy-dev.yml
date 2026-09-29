@@ -26,6 +26,8 @@ jobs:
   test:
     name: Test the release
     uses: ./.github/workflows/test.yml
+    # The image check logs in to dhi.io with the DHI_TOKEN secret
+    secrets: inherit
 
   deploy:
     name: Deploy to nyt-labeler-dev
@@ -70,9 +72,10 @@ jobs:
           DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           BSKY_DID: ${{ vars.BSKY_DID }}
           BSKY_IDENTIFIER: ${{ vars.BSKY_IDENTIFIER }}
+          DHI_USERNAME: ${{ vars.DHI_USERNAME }}
         run: |
           missing=""
-          for name in WORKLOAD_IDENTITY_PROVIDER DEPLOY_SERVICE_ACCOUNT BSKY_DID BSKY_IDENTIFIER; do
+          for name in WORKLOAD_IDENTITY_PROVIDER DEPLOY_SERVICE_ACCOUNT BSKY_DID BSKY_IDENTIFIER DHI_USERNAME; do
             [ -n "${!name}" ] || missing="$missing $name"
           done
           if [ -n "$missing" ]; then
@@ -92,17 +95,20 @@ jobs:
           install_components: beta # deploy.sh uses "gcloud beta" for the domain mapping
 
       # deploy.sh reads these from a local .env. None are secret: the signing key, password
-      # and database URL come from Secret Manager at runtime.
+      # and database URL come from Secret Manager at runtime, and so does the Docker token
+      # Cloud Build uses to pull the base images.
       - name: Write the deploy settings
         env:
           BSKY_DID: ${{ vars.BSKY_DID }}
           BSKY_IDENTIFIER: ${{ vars.BSKY_IDENTIFIER }}
           FIREHOSE_URL: ${{ vars.FIREHOSE_URL }}
           WANTED_COLLECTION: ${{ vars.WANTED_COLLECTION }}
+          DHI_USERNAME: ${{ vars.DHI_USERNAME }}
         run: |
           {
             echo "BSKY_DID=${BSKY_DID}"
             echo "BSKY_IDENTIFIER=${BSKY_IDENTIFIER}"
+            echo "DHI_USERNAME=${DHI_USERNAME}"
             if [ -n "$FIREHOSE_URL" ]; then echo "FIREHOSE_URL=${FIREHOSE_URL}"; fi
             if [ -n "$WANTED_COLLECTION" ]; then echo "WANTED_COLLECTION=${WANTED_COLLECTION}"; fi
           } > .env
