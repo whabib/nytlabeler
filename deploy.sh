@@ -12,6 +12,9 @@ REGION="us-central1"
 # Cloud SQL instance, for the Cloud SQL connector fallback (the database address itself comes
 # from the DATABASE_URL secret)
 CLOUDSQL_INSTANCE="nytdata"
+# Docker account that owns the DOCKER_DHI_TOKEN secret, for pulling the base images from
+# Docker Hardened Images (dhi.io); override with DHI_USERNAME in the environment or .env
+DHI_USERNAME_DEFAULT="whabib"
 
 # Help / Usage block
 usage() {
@@ -133,9 +136,14 @@ if [ -n "${WANTED_COLLECTION:-}" ]; then
   ENV_VARS="${ENV_VARS},WANTED_COLLECTION=${WANTED_COLLECTION}"
 fi
 
-# Build the container using Cloud Build
+# The base images come from Docker Hardened Images (dhi.io), which needs a Docker login.
+# The token is in Secret Manager (DOCKER_DHI_TOKEN); cloudbuild.yaml logs in with it.
+DHI_USERNAME="${DHI_USERNAME:-$DHI_USERNAME_DEFAULT}"
+
+# Build the container using Cloud Build (see cloudbuild.yaml)
 echo "📦 Building and uploading container image via Cloud Build..."
-gcloud builds submit --tag "${IMAGE_TAG}" .
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions "_IMAGE=${IMAGE_TAG},_DHI_USERNAME=${DHI_USERNAME}" .
 
 # Prepare gcloud deploy command options for the Service
 echo "🚀 Deploying Cloud Run Service: ${SERVICE_NAME}..."
