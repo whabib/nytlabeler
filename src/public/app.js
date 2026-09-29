@@ -247,13 +247,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (diagEndpointEl && stats.activeEndpoint) {
+      let host = stats.activeEndpoint;
       try {
-        const url = new URL(stats.activeEndpoint);
-        diagEndpointEl.textContent = url.host;
+        host = new URL(stats.activeEndpoint).host;
         diagEndpointEl.title = stats.activeEndpoint; // Full URL on hover
       } catch {
-        diagEndpointEl.textContent = stats.activeEndpoint;
+        diagEndpointEl.removeAttribute('title');
       }
+      setBreakableText(diagEndpointEl, host);
     }
 
     if (diagStatusEl) {
@@ -667,6 +668,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('');
 
     setUpdated('reports-updated', report?.generatedAt);
+  }
+
+  // Shows text that may wrap after each dot (a host name wraps between its parts rather than
+  // mid-word), built as text nodes so the value is never parsed as HTML
+  function setBreakableText(element, text) {
+    const parts = String(text).split('.');
+    element.replaceChildren();
+    parts.forEach((part, i) => {
+      if (i < parts.length - 1) {
+        element.append(`${part}.`, document.createElement('wbr'));
+      } else {
+        element.append(part);
+      }
+    });
   }
 
   // HTML escape helper to prevent XSS: apply to every outside value inserted as HTML
