@@ -456,6 +456,10 @@ function closeSocket() {
     // Remove listeners to avoid triggering of handleDisconnect on intentional close
     socket.removeAllListeners('close');
     socket.removeAllListeners('error');
+    // Closing a socket that is still connecting makes ws emit "WebSocket was closed before
+    // the connection was established"; with no listener that's an uncaught exception, which
+    // would crash the process
+    socket.on('error', () => {});
 
     try {
       socket.close();

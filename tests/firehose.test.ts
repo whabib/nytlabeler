@@ -55,7 +55,10 @@ describe('Firehose leadership', () => {
   // Test-controlled database state
   let savedSetting: string | null = 'true';
   let lookupDelayMs = 0;
-  let labelDelayMs = 0; // How long each createLabel takes; Infinity waits until released
+  let labelDelayMs = 0;
+  // While set, the fake Jetstream holds new handshakes, leaving the client connecting
+  let holdHandshakes = false;
+  const heldHandshakes: ((accept: boolean, code?: number) => void)[] = []; // How long each createLabel takes; Infinity waits until released
   const stuckLabels: (() => void)[] = [];
   let lookups = 0;
   let lockFree = false;
@@ -64,7 +67,14 @@ describe('Firehose leadership', () => {
   const originalQuery = pool.query;
 
   before(async () => {
-    jetstream = new WebSocketServer({ port: 14301, host: '127.0.0.1' });
+    jetstream = new WebSocketServer({
+      port: 14301,
+      host: '127.0.0.1',
+      verifyClient: (_info: unknown, done: (accept: boolean, code?: number) => void) => {
+        if (holdHandshakes) heldHandshakes.push(done);
+        else done(true);
+      },
+    });
     jetstream.on('connection', (ws, request) => {
       connections.push(ws);
       connectionUrls.push(request.url ?? '');
@@ -312,6 +322,25 @@ describe('Firehose leadership', () => {
       // Let the stuck write finish, so no labeling is left in flight for later tests
       for (const release of stuckLabels.splice(0)) release();
       await waitFor(() => created.length === 1);
+    }
+  });
+
+  test('stopping while a connection is still being established does not crash the process', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown) => uncaught.push(err);
+    process.on('uncaughtException', onUncaught);
+    holdHandshakes = true;
+    try {
+      lockFree = true;
+      startFirehoseListener();
+      await waitFor(() => heldHandshakes.length === 1); // Connecting: the handshake is on hold
+      stopFirehoseListener();
+      await wait(100);
+      assert.deepStrictEqual(uncaught.map(String), [], 'Closing a connecting socket must not throw');
+    } finally {
+      holdHandshakes = false;
+      for (const done of heldHandshakes.splice(0)) done(false, 503);
+      process.off('uncaughtException', onUncaught);
     }
   });
 
