@@ -432,6 +432,22 @@ describe('LeaderElection handoff', () => {
     ]);
   });
 
+  test('closes its connection, releasing the lock, if onLose fails while stepping down', async () => {
+    const old = instance('old', 1_000, {
+      onLose: () => {
+        throw new Error('onLose failed');
+      },
+    });
+    old.election.start();
+    await wait(50);
+    const newer = instance('new', 2_000);
+    newer.election.start();
+    await wait(100);
+    assert.strictEqual(old.election.isLeader, false);
+    assert.ok(!db.sessions.has(old.sessions[0]), 'The old session was closed, releasing the lock');
+    assert.strictEqual(newer.election.isLeader, true);
+  });
+
   test('closes its connection, releasing the lock, if beforeRelease fails', async () => {
     const old = instance('old', 1_000, { beforeRelease: async () => { throw new Error('drain failed'); } });
     old.election.start();
