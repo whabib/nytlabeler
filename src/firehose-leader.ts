@@ -45,6 +45,10 @@ interface HandoffRequest {
 /** How many quick lock attempts follow each step-down request. */
 const HANDOFF_POLLS = 5;
 
+/** The largest timestamp a Date can hold, in ms; a request's start time must be within it. */
+const MAX_DATE_MS = 8.64e15;
+const MAX_INSTANCE_ID_LENGTH = 200;
+
 /**
  * Elects one leader among instances sharing a Postgres database, using a session-level
  * advisory lock held on a dedicated connection.
@@ -123,7 +127,11 @@ export class LeaderElection {
         );
         if (result.rows[0]?.acquired && this.running) {
           this.handoffPollsLeft = 0;
+          const client = this.client;
           await this.listenForHandoffRequests();
+          // stop() (or a lost connection) may have ended this session while LISTEN was in
+          // flight; its lock went with it, so don't lead
+          if (!this.running || this.client !== client) return;
           this.isLeader = true;
           console.log(`👑 [LEADER] Acquired leadership for ${this.options.lockKey} (instance ${this.instanceId})`);
           this.options.onAcquire();
@@ -171,13 +179,18 @@ export class LeaderElection {
     let request: HandoffRequest;
     try {
       const parsed = JSON.parse(message.payload ?? '');
-      if (typeof parsed?.instanceId !== 'string' || !Number.isFinite(parsed?.startedAt)) return;
+      // Requests come from other instances, so check them fully before acting on one
+      const { instanceId, startedAt } = parsed ?? {};
+      if (typeof instanceId !== 'string' || instanceId.length === 0 || instanceId.length > MAX_INSTANCE_ID_LENGTH) return;
+      if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || Math.abs(startedAt) > MAX_DATE_MS) return;
       request = { instanceId: parsed.instanceId, startedAt: parsed.startedAt };
     } catch {
       return;
     }
     if (request.instanceId === this.instanceId || !this.isNewer(request)) return;
-    void this.stepDownFor(request);
+    this.stepDownFor(request).catch((err) => {
+      console.error(`❌ [LEADER] Stepping down for ${this.options.lockKey} failed:`, err);
+    });
   }
 
   /**
@@ -190,12 +203,13 @@ export class LeaderElection {
     if (!this.isLeader || !client) return;
     this.isLeader = false;
     this.yieldedUntil = Date.now() + this.yieldGraceMs;
-    console.log(
-      `🤝 [LEADER] Stepping down for ${this.options.lockKey}: newer instance ${request.instanceId} ` +
-        `(started ${new Date(request.startedAt).toISOString()}) takes over from ${this.instanceId}`,
-    );
+    // Stop leading before anything else can fail, then give up the lock one way or another
     this.options.onLose();
     try {
+      console.log(
+        `🤝 [LEADER] Stepping down for ${this.options.lockKey}: newer instance ${request.instanceId} ` +
+          `(started ${new Date(request.startedAt).toISOString()}) takes over from ${this.instanceId}`,
+      );
       await client.query(`UNLISTEN "${this.options.handoffChannel}"`);
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [this.options.lockKey]);
     } catch (err) {

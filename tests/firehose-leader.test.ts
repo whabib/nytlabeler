@@ -206,6 +206,8 @@ describe('LeaderElection', () => {
  */
 class FakeDatabase {
   lockOwner: FakeSession | null = null;
+  /** Holds each LISTEN this long, to let a test act while one is in flight. */
+  listenDelayMs = 0;
   readonly sessions = new Set<FakeSession>();
   notify(channel: string, payload: string) {
     for (const session of this.sessions) {
@@ -236,6 +238,7 @@ class FakeSession extends EventEmitter implements LeaderClient {
       if (this.db.lockOwner === this) this.db.lockOwner = null;
     }
     const listen = /^(UN)?LISTEN "(.+)"$/.exec(text);
+    if (listen && !listen[1] && this.db.listenDelayMs) await new Promise((resolve) => setTimeout(resolve, this.db.listenDelayMs));
     if (listen) {
       if (listen[1]) this.listening.delete(listen[2]);
       else this.listening.add(listen[2]);
@@ -396,6 +399,37 @@ describe('LeaderElection handoff', () => {
     await wait(100);
     assert.strictEqual(leader.election.isLeader, true);
     assert.ok(!newer.sessions[0].queries.some((q) => q.includes('pg_notify') || q.startsWith('LISTEN')));
+  });
+
+  test('does not lead if stopped while it was setting up as leader', async () => {
+    db.listenDelayMs = 40;
+    const leader = instance('leader', 1_000);
+    leader.election.start();
+    await wait(10); // It holds the lock and is waiting on LISTEN
+    await leader.election.stop();
+    await wait(60);
+    assert.strictEqual(leader.election.isLeader, false);
+    assert.deepStrictEqual(events, [], 'onAcquire must not run for a stopped election');
+    assert.strictEqual(db.lockOwner, null, 'Ending the session released the lock');
+  });
+
+  test('ignores requests with out-of-range times or oversized ids, without failing', async () => {
+    const leader = instance('leader', 2_000);
+    leader.election.start();
+    await wait(50);
+    const session = leader.sessions[0];
+    for (const request of [
+      { instanceId: 'x', startedAt: 1e20 }, // Newer, but not a valid Date
+      { instanceId: 'x', startedAt: -1e20 },
+      { instanceId: 'x'.repeat(201), startedAt: 9_999 },
+      { instanceId: '', startedAt: 9_999 },
+    ]) {
+      session.emit('notification', { channel: CHANNEL, payload: JSON.stringify(request) });
+    }
+    await wait(30);
+    assert.strictEqual(leader.election.isLeader, true);
+    assert.strictEqual(db.lockOwner, session);
+    assert.deepStrictEqual(events, ['leader acquired']);
   });
 
   test('rejects a channel name that is not a plain identifier', () => {
