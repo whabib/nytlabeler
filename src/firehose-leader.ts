@@ -210,8 +210,8 @@ export class LeaderElection {
     this.isLeader = false;
     this.yieldedUntil = Date.now() + this.yieldGraceMs;
     // Stop leading before anything else can fail, then give up the lock one way or another
-    this.options.onLose();
     try {
+      this.options.onLose();
       console.log(
         `🤝 [LEADER] Stepping down for ${this.options.lockKey}: newer instance ${request.instanceId} ` +
           `(started ${new Date(request.startedAt).toISOString()}) takes over from ${this.instanceId}`,
