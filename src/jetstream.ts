@@ -15,6 +15,28 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 // under an earlier generation are dropped instead of labeled.
 let leaderGeneration = 0;
 
+// Where to resume after the connection drops: the newest event time (Jetstream's time_us)
+// received in this leadership term, or null to start live. Without it, every post sent
+// while the connection was down, or on a connection that stalled before dropping, is lost.
+let resumeCursorUs: number | null = null;
+/** Replay from a little before the newest event, for events in flight when it dropped. */
+export const RESUME_REWIND_US = 5_000_000;
+/** After a longer gap, start live rather than replay it. */
+export const MAX_RESUME_AGE_US = 60 * 60 * 1_000_000;
+
+// NYT posts handled recently, so a post replayed after a reconnect isn't labeled twice
+const RECENT_POSTS_LIMIT = 10_000;
+const recentPosts = new Set<string>();
+
+/** Records a post as handled; true if it already was. */
+function alreadyHandled(postUri: string): boolean {
+  if (recentPosts.has(postUri)) return true;
+  recentPosts.add(postUri);
+  // Sets iterate in insertion order, so this drops the oldest
+  if (recentPosts.size > RECENT_POSTS_LIMIT) recentPosts.delete(recentPosts.values().next().value!);
+  return false;
+}
+
 // Posts being labeled right now, past the leadership check. A leader handing over waits for
 // them before releasing the lock, so the old and new leader never publish at the same time.
 let labelingInFlight = 0;
@@ -143,6 +165,8 @@ function getLeadership(): LeaderElection {
     onAcquire: () => {
       leaderGeneration++;
       stats.firehoseLeader = true;
+      // A new term starts live: another instance handled the firehose until now
+      resumeCursorUs = null;
       // Another instance may have toggled the firehose since this one started
       void syncWithSavedSetting().then(() => {
         if (stats.firehoseEnabled) {
@@ -231,8 +255,20 @@ function connect() {
     url.searchParams.set('wantedCollections', WANTED_COLLECTION);
   }
 
+  // Reconnecting after a drop: replay what was missed instead of starting live
+  if (resumeCursorUs !== null) {
+    if (Date.now() * 1000 - resumeCursorUs <= MAX_RESUME_AGE_US) {
+      url.searchParams.set('cursor', String(resumeCursorUs - RESUME_REWIND_US));
+      console.log(`⏪ Resuming the firehose from ${new Date((resumeCursorUs - RESUME_REWIND_US) / 1000).toISOString()}`);
+    } else {
+      console.log('⏩ The firehose was down for over an hour; starting live instead of replaying the gap.');
+      resumeCursorUs = null;
+    }
+  }
+
   const finalUrl = url.toString();
   console.log(`📡 Connecting to Jetstream firehose at: ${finalUrl}`);
+  // The URL actually connected to, cursor included (the dashboard shows it on hover)
   stats.activeEndpoint = finalUrl;
 
   socket = new WebSocket(finalUrl);
@@ -255,6 +291,11 @@ function connect() {
       return;
     }
 
+    // Remember how far this term has read, for resuming after a drop
+    if (generation === leaderGeneration && Number.isSafeInteger(dataObj.time_us) && dataObj.time_us > (resumeCursorUs ?? 0)) {
+      resumeCursorUs = dataObj.time_us;
+    }
+
     if (dataObj.kind === 'commit' && dataObj.commit && dataObj.commit.collection === WANTED_COLLECTION) {
       stats.postsProcessed++;
       stats.lastEventTime = new Date().toISOString();
@@ -264,8 +305,10 @@ function connect() {
         const nytUrls = extractNytUrls(record);
         if (nytUrls.length === 0) return;
 
-        stats.nytLinksDetected++;
         const postUri = `at://${dataObj.did}/${WANTED_COLLECTION}/${dataObj.commit.rkey}`;
+        // Replayed after a reconnect: it was already handled
+        if (alreadyHandled(postUri)) return;
+        stats.nytLinksDetected++;
         const authorDid = dataObj.did;
         const postText = record.text || '';
 
@@ -395,6 +438,9 @@ export function stopFirehoseListener() {
  */
 function closeSocket() {
   stats.firehoseConnected = false;
+  // An intentional close (leadership lost, or the firehose turned off) starts the next
+  // connection live; only a dropped connection resumes
+  resumeCursorUs = null;
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);

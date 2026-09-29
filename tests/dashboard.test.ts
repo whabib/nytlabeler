@@ -787,3 +787,38 @@ describe('Reports › By Authors', () => {
     }
   });
 });
+
+describe('Active endpoint', () => {
+  let window: any;
+  let document: Document;
+  let send: (message: unknown) => void;
+
+  before(async () => {
+    ({ window, document, send } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    }));
+  });
+
+  after(() => {
+    window.close();
+  });
+
+  test('shows the whole host, able to wrap after each dot, with the full URL on hover', () => {
+    const endpoint = 'wss://jetstream1.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post&cursor=1790648800000000';
+    send({ type: 'init', stats: { ...BASE_STATS, activeEndpoint: endpoint }, recentLabels: [] });
+    const el = document.getElementById('diag-endpoint')!;
+    assert.strictEqual(el.textContent, 'jetstream1.us-east.bsky.network');
+    assert.strictEqual(el.title, endpoint);
+    assert.strictEqual(el.querySelectorAll('wbr').length, 3);
+  });
+
+  test('shows a value that is not a URL as plain text', () => {
+    send({ type: 'heartbeat', stats: { ...BASE_STATS, activeEndpoint: PAYLOAD } });
+    const el = document.getElementById('diag-endpoint')!;
+    assert.strictEqual(el.textContent, PAYLOAD);
+    assert.strictEqual(el.getAttribute('title'), null);
+    assert.strictEqual(injectedImages(document).length, 0);
+  });
+});

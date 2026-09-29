@@ -480,8 +480,10 @@ body {
 
 .diag-item {
   display: flex;
+  flex-wrap: wrap; /* A long value moves below its label rather than being cut off */
   align-items: center;
   justify-content: space-between;
+  gap: 4px 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
@@ -514,10 +516,11 @@ body {
   padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid var(--border-color);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Show the whole value: it wraps (at the dots of a host name) instead of being cut off */
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .diag-value.online {
