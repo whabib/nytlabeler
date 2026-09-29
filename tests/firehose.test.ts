@@ -6,7 +6,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 // Point the firehose at a local mock Jetstream BEFORE importing the module
 process.env.FIREHOSE_URL = 'ws://127.0.0.1:14301/subscribe';
 
-const { startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, HANDOFF_CHANNEL } = await import('../src/jetstream.js');
+const {
+  startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, HANDOFF_CHANNEL, RESUME_REWIND_US,
+} = await import('../src/jetstream.js');
 const { stats, setLabelerServer } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 
@@ -46,7 +48,9 @@ after(() => {
 describe('Firehose leadership', () => {
   let jetstream: WebSocketServer;
   const connections: WebSocket[] = [];
+  const connectionUrls: string[] = []; // The URL of each connection, cursor included
   const open = () => connections.filter((ws) => ws.readyState === WebSocket.OPEN);
+  const cursorOf = (index: number) => new URL(connectionUrls[index], 'ws://x').searchParams.get('cursor');
 
   // Test-controlled database state
   let savedSetting: string | null = 'true';
@@ -59,8 +63,9 @@ describe('Firehose leadership', () => {
 
   before(async () => {
     jetstream = new WebSocketServer({ port: 14301, host: '127.0.0.1' });
-    jetstream.on('connection', (ws) => {
+    jetstream.on('connection', (ws, request) => {
       connections.push(ws);
+      connectionUrls.push(request.url ?? '');
       // Keep the watchdog quiet
       const keepAlive = setInterval(() => ws.send(JSON.stringify({ kind: 'identity' })), 1000);
       ws.on('close', () => clearInterval(keepAlive));
@@ -109,6 +114,7 @@ describe('Firehose leadership', () => {
     await releaseFirehoseLeadership();
     for (const ws of connections) ws.terminate();
     connections.length = 0;
+    connectionUrls.length = 0;
   });
 
   after(async () => {
@@ -124,8 +130,9 @@ describe('Firehose leadership', () => {
     clients[clients.length - 1].emit('end');
   }
 
-  function sendNytPost(ws: WebSocket, rkey: string, text = 'Read this https://www.nytimes.com/2026/09/23/us/story.html') {
+  function sendNytPost(ws: WebSocket, rkey: string, text = 'Read this https://www.nytimes.com/2026/09/23/us/story.html', timeUs?: number) {
     ws.send(JSON.stringify({
+      ...(timeUs === undefined ? {} : { time_us: timeUs }),
       kind: 'commit',
       did: 'did:plc:poster',
       commit: {
@@ -190,6 +197,63 @@ describe('Firehose leadership', () => {
     assert.deepStrictEqual(queries, ['unlock (leader: false, socket open: false)']);
     await wait(100);
     assert.strictEqual(open().length, 0, 'It must not reconnect while on standby');
+  });
+
+  test('resumes after a dropped connection from just before the last event, labeling each post once', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    assert.strictEqual(cursorOf(0), null, 'The first connection starts live');
+
+    const lastEventUs = Date.now() * 1000;
+    sendNytPost(open()[0], 'resume-before', undefined, lastEventUs - 1_000_000);
+    sendNytPost(open()[0], 'resume-last', undefined, lastEventUs);
+    await waitFor(() => created.length === 2);
+
+    // The connection drops (like Jetstream closing it with 1006); the reconnect replays
+    connections[0].terminate();
+    await waitFor(() => connectionUrls.length === 2 && open().length === 1, 4000);
+    assert.strictEqual(cursorOf(1), String(lastEventUs - RESUME_REWIND_US));
+
+    // Jetstream replays the posts from the rewind, then sends one that was missed
+    sendNytPost(open()[0], 'resume-before', undefined, lastEventUs - 1_000_000);
+    sendNytPost(open()[0], 'resume-last', undefined, lastEventUs);
+    sendNytPost(open()[0], 'resume-missed', undefined, lastEventUs + 2_000_000);
+    await waitFor(() => created.length === 3);
+    await wait(50);
+    assert.deepStrictEqual(created, ['us', 'us', 'us'], 'Replayed posts must not be labeled again');
+  });
+
+  test('starts live after losing and regaining leadership, or turning the firehose off and on', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    sendNytPost(open()[0], 'live-1', undefined, Date.now() * 1000);
+    await waitFor(() => created.length === 1);
+
+    // Another instance may have handled the firehose in between, so no replay
+    loseLeadership();
+    lockFree = true;
+    await waitFor(() => connectionUrls.length === 2 && open().length === 1);
+    assert.strictEqual(cursorOf(1), null);
+
+    sendNytPost(open()[0], 'live-2', undefined, Date.now() * 1000);
+    await waitFor(() => created.length === 2);
+    stopFirehoseListener();
+    startFirehoseListener();
+    await waitFor(() => connectionUrls.length === 3 && open().length === 1);
+    assert.strictEqual(cursorOf(2), null);
+  });
+
+  test('starts live instead of replaying a gap of over an hour', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    sendNytPost(open()[0], 'stale-1', undefined, (Date.now() - 2 * 60 * 60 * 1000) * 1000);
+    await waitFor(() => created.length === 1);
+    connections[0].terminate();
+    await waitFor(() => connectionUrls.length === 2 && open().length === 1, 4000);
+    assert.strictEqual(cursorOf(1), null);
   });
 
   test('uses a handoff channel that is a plain Postgres identifier', () => {
