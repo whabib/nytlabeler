@@ -401,6 +401,48 @@ describe('LeaderElection handoff', () => {
     assert.ok(!newer.sessions[0].queries.some((q) => q.includes('pg_notify') || q.startsWith('LISTEN')));
   });
 
+  test('waits for beforeRelease, holding the lock, before the newer instance can lead', async () => {
+    let finishWork: () => void = () => {};
+    const old = instance('old', 1_000, {
+      beforeRelease: () => {
+        events.push(`old draining (lock held: ${db.lockOwner !== null})`);
+        return new Promise<void>((resolve) => {
+          finishWork = () => {
+            events.push('old drained');
+            resolve();
+          };
+        });
+      },
+    });
+    old.election.start();
+    await wait(50);
+    const newer = instance('new', 2_000);
+    newer.election.start();
+    await wait(100);
+    // Still draining: the lock stays with the old instance, and nobody leads
+    assert.strictEqual(newer.election.isLeader, false);
+    assert.strictEqual(old.election.isLeader, false);
+    assert.strictEqual(db.lockOwner, old.sessions[0]);
+
+    finishWork();
+    await wait(150);
+    assert.strictEqual(newer.election.isLeader, true);
+    assert.deepStrictEqual(events, [
+      'old acquired', 'old lost (lock held: true)', 'old draining (lock held: true)', 'old drained', 'new acquired',
+    ]);
+  });
+
+  test('closes its connection, releasing the lock, if beforeRelease fails', async () => {
+    const old = instance('old', 1_000, { beforeRelease: async () => { throw new Error('drain failed'); } });
+    old.election.start();
+    await wait(50);
+    const newer = instance('new', 2_000);
+    newer.election.start();
+    await wait(100);
+    assert.strictEqual(newer.election.isLeader, true);
+    assert.ok(!db.sessions.has(old.sessions[0]));
+  });
+
   test('does not lead if stopped while it was setting up as leader', async () => {
     db.listenDelayMs = 40;
     const leader = instance('leader', 1_000);
