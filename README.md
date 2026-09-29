@@ -20,7 +20,7 @@ Most recent work has moved from Gemini to Claude Opus 5.5, pairing with Github C
   * Emits author labels *only* for authors of `opinion` section pieces who have written more than one total article in the database (e.g., `ross-douthat`).
 * **ATProto Compliance**: Signs and transmits lower-case kebab-case labels (`val` tokens) while publishing beautiful proper-cased display names (`Ross Douthat`) in the locales registry.
 * **Glassmorphic Web Dashboard**: Express + WebSocket control panel displaying real-time post throughput, matched database articles, system statistics, and active memory charts.
-* **Cloud-Ready**: Bundled with a production-optimized multi-stage `Dockerfile` and a fully parameterized `deploy.sh` script for Google Cloud Run.
+* **Cloud-Ready**: Bundled with a production-optimized multi-stage `Dockerfile` and a fully parameterized `deploy.sh` script for Google Cloud Run. The image is built on [Docker Hardened Images](https://dhi.io) (Alpine), with no npm or shell at runtime, and runs as a non-root user. CI fails on any critical or high vulnerability in it.
 
 ---
 
