@@ -209,7 +209,8 @@ export class LeaderElection {
     if (!this.isLeader || !client) return;
     this.isLeader = false;
     this.yieldedUntil = Date.now() + this.yieldGraceMs;
-    // Stop leading before anything else can fail, then give up the lock one way or another
+    // Stop leading first, then give up the lock. If anything fails, onLose included, closing
+    // the connection releases the lock instead, so it's never held by an instance not leading.
     try {
       this.options.onLose();
       console.log(
