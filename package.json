@@ -17,7 +17,7 @@
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
-    "labeler": "git+https://github.com/whabib/labeler.git#da1e0a245f0615e54ae36ddb936fdd4a408e94cc",
+    "labeler": "git+https://github.com/whabib/labeler.git#bf6c18728e9e44c0d66cef15b70e74e8570b2e81",
     "pg": "^8.12.0",
     "ws": "^8.17.1"
   },
