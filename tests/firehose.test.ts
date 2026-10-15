@@ -7,7 +7,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 process.env.FIREHOSE_URL = 'ws://127.0.0.1:14301/subscribe';
 
 const {
-  startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, HANDOFF_CHANNEL, RESUME_REWIND_US,
+  startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, resignFirehoseLeadership, HANDOFF_CHANNEL, RESUME_REWIND_US,
 } = await import('../src/jetstream.js');
 const { stats, setLabelerServer } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
@@ -301,6 +301,30 @@ describe('Firehose leadership', () => {
     await waitFor(() => order.length === 1);
     assert.deepStrictEqual(order, ['unlock (labels written: 1)'], 'The label was written before the lock was released');
     assert.strictEqual(stats.firehoseLeader, false);
+  });
+
+  test('on shutdown, closes the firehose and finishes labeling before releasing the lock, then tells the standbys', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    const client = clients[clients.length - 1];
+    const order: string[] = [];
+    const originalQuery = client.query.bind(client);
+    client.query = async (text: string) => {
+      if (text.includes('pg_advisory_unlock')) order.push(`unlock (labels written: ${created.length}, socket open: ${open().length > 0})`);
+      if (text.includes('pg_notify')) order.push('notify standbys');
+      return originalQuery(text);
+    };
+    labelDelayMs = 150;
+    sendNytPost(open()[0], 'resign-1');
+    await waitFor(() => lookups === 1); // Past the lookup; now writing its label
+    await wait(20);
+
+    await resignFirehoseLeadership();
+    assert.deepStrictEqual(order, ['unlock (labels written: 1, socket open: false)', 'notify standbys']);
+    assert.strictEqual(stats.firehoseLeader, false);
+    await wait(100);
+    assert.strictEqual(open().length, 0, 'It must not reconnect after resigning');
   });
 
   test('on handoff, stops waiting for stuck labeling after the drain timeout', async () => {
