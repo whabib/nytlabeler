@@ -21,9 +21,10 @@ export interface LeaderElectionOptions {
   /** Runs after each successful heartbeat while leading. Errors are logged, not fatal. */
   onLeaderTick?: () => Promise<void> | void;
   /**
-   * Postgres channel for step-down requests. With one, a standby asks the leader to hand
-   * over, and the leader steps down for a newer instance (see stepDownFor). Without one,
-   * leadership only changes when the leader's session ends.
+   * Postgres channel for step-down requests and release notices. With one, a standby asks
+   * the leader to hand over, and the leader steps down for a newer instance (see
+   * stepDownFor); a leader that resigns tells standbys, so one takes over at once. Without
+   * one, leadership only changes when the leader's session ends.
    */
   handoffChannel?: string;
   /** Identifies this instance in step-down requests and logs. */
@@ -48,6 +49,11 @@ interface HandoffRequest {
   startedAt: number;
 }
 
+/** A resigning leader's notice that the lock is free: `{ released: <its instance id> }`. */
+interface ReleaseNotice {
+  released: string;
+}
+
 /** How many quick lock attempts follow each step-down request. */
 const HANDOFF_POLLS = 5;
 
@@ -65,7 +71,9 @@ const MAX_INSTANCE_ID_LENGTH = 200;
  *
  * With a handoff channel, the newest instance also takes over from a running leader: an old
  * instance can keep running for a long time after a deploy or an instance replacement (while
- * its WebSocket subscribers stay connected), but new traffic goes to the new one.
+ * its WebSocket subscribers stay connected), but new traffic goes to the new one. And a
+ * leader that shuts down (see resign) tells the standbys, so one takes over right away
+ * instead of on its next retry.
  */
 export class LeaderElection {
   isLeader = false;
@@ -80,6 +88,13 @@ export class LeaderElection {
   private readonly yieldGraceMs: number;
   private yieldedUntil = 0;
   private handoffPollsLeft = 0;
+  /** Whether the current connection LISTENs on the handoff channel. */
+  private listening = false;
+  /** A tick is under way; a wake-up then runs the next one straight after it. */
+  private ticking = false;
+  private wakeRequested = false;
+  /** A step-down for a newer instance under way: it still holds the lock until it finishes. */
+  private handoff: Promise<void> | null = null;
 
   constructor(private readonly options: LeaderElectionOptions) {
     this.retryMs = options.retryMs ?? 10_000;
@@ -107,8 +122,56 @@ export class LeaderElection {
     await this.dropConnection('stopped');
   }
 
+  /**
+   * Stop competing and hand leadership over cleanly, e.g. when the instance shuts down:
+   * stop leading (onLose), let work under way finish (beforeRelease), release the lock, then
+   * tell the standbys so one takes over at once. If any step fails, closing the connection
+   * releases the lock instead, and a standby takes over on its next retry.
+   */
+  async resign(): Promise<void> {
+    const client = this.client;
+    const wasLeader = this.isLeader;
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (!wasLeader || !client) {
+      // Stepping down for a newer instance: it holds the lock until work under way finishes,
+      // so let it complete rather than cut it short (the shutdown deadline still applies)
+      await this.handoff;
+      await this.dropConnection('stopped');
+      return;
+    }
+    this.isLeader = false;
+    try {
+      this.options.onLose();
+      console.log(`👋 [LEADER] Resigning leadership for ${this.options.lockKey} (instance ${this.instanceId})`);
+      await this.options.beforeRelease?.();
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [this.options.lockKey]);
+      if (this.options.handoffChannel) {
+        const notice: ReleaseNotice = { released: this.instanceId };
+        await client.query('SELECT pg_notify($1, $2)', [this.options.handoffChannel, JSON.stringify(notice)]);
+      }
+    } catch (err) {
+      console.error(`❌ [LEADER] Resigning ${this.options.lockKey} failed; closing the connection instead:`, err);
+    }
+    if (client === this.client) await this.dropConnection('resigned');
+  }
+
+  /** Try for the lock now rather than at the next retry (after a release notice). */
+  private wakeUp(): void {
+    if (!this.running) return;
+    if (this.ticking) {
+      this.wakeRequested = true;
+      return;
+    }
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.tick(), 0);
+    this.timer.unref?.();
+  }
+
   private async tick(): Promise<void> {
     let nextDelay = this.retryMs;
+    this.ticking = true;
     try {
       if (this.isLeader) {
         // Heartbeat: fails if the connection (and with it the lock) is gone
@@ -142,6 +205,8 @@ export class LeaderElection {
           console.log(`👑 [LEADER] Acquired leadership for ${this.options.lockKey} (instance ${this.instanceId})`);
           this.options.onAcquire();
         } else if (this.options.handoffChannel && this.running) {
+          // Hear when the leader resigns, and take over then
+          await this.listenForHandoffRequests();
           // Ask the leader to hand over, then try the lock a few times in quick succession
           if (this.handoffPollsLeft === 0) {
             await this.requestHandoff();
@@ -156,6 +221,11 @@ export class LeaderElection {
       console.error(`❌ [LEADER] Leadership check for ${this.options.lockKey} failed:`, err);
       await this.dropConnection('connection error');
     } finally {
+      this.ticking = false;
+      if (this.wakeRequested) {
+        this.wakeRequested = false;
+        nextDelay = 0;
+      }
       if (this.running) {
         this.timer = setTimeout(() => void this.tick(), nextDelay);
         this.timer.unref?.();
@@ -168,10 +238,13 @@ export class LeaderElection {
     await this.client!.query('SELECT pg_notify($1, $2)', [this.options.handoffChannel, JSON.stringify(request)]);
   }
 
+  /** LISTENs on the handoff channel, once per connection: requests reach the leader, notices the standbys. */
   private async listenForHandoffRequests(): Promise<void> {
-    if (!this.options.handoffChannel) return;
+    if (!this.options.handoffChannel || this.listening) return;
+    const client = this.client!;
     // The channel matches CHANNEL_PATTERN, so it's safe as a quoted identifier
-    await this.client!.query(`LISTEN "${this.options.handoffChannel}"`);
+    await client.query(`LISTEN "${this.options.handoffChannel}"`);
+    if (client === this.client) this.listening = true;
   }
 
   /** Whether a requester should lead instead of this instance: the newer one leads. */
@@ -181,18 +254,35 @@ export class LeaderElection {
   }
 
   private onNotification(client: LeaderClient, message: { channel?: string; payload?: string }): void {
-    if (client !== this.client || !this.isLeader || message.channel !== this.options.handoffChannel) return;
-    let request: HandoffRequest;
+    if (client !== this.client || message.channel !== this.options.handoffChannel) return;
+    let parsed: any;
     try {
-      const parsed = JSON.parse(message.payload ?? '');
-      // Requests come from other instances, so check them fully before acting on one
-      const { instanceId, startedAt } = parsed ?? {};
-      if (typeof instanceId !== 'string' || instanceId.length === 0 || instanceId.length > MAX_INSTANCE_ID_LENGTH) return;
-      if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || Math.abs(startedAt) > MAX_DATE_MS) return;
-      request = { instanceId: parsed.instanceId, startedAt: parsed.startedAt };
+      parsed = JSON.parse(message.payload ?? '');
     } catch {
       return;
     }
+    if (this.isLeader) this.onHandoffRequest(parsed);
+    else this.onReleaseNotice(parsed);
+  }
+
+  /** A standby hears that the leader resigned: try for the lock now, even right after yielding. */
+  private onReleaseNotice(parsed: any): void {
+    // Notices come from other instances, so check them before acting on one
+    const released = parsed?.released;
+    if (typeof released !== 'string' || released.length === 0 || released.length > MAX_INSTANCE_ID_LENGTH) return;
+    if (released === this.instanceId || !this.running) return;
+    this.yieldedUntil = 0;
+    this.handoffPollsLeft = 0;
+    this.wakeUp();
+  }
+
+  /** The leader hears a standby asking it to step down. */
+  private onHandoffRequest(parsed: any): void {
+    // Requests come from other instances, so check them fully before acting on one
+    const { instanceId, startedAt } = parsed ?? {};
+    if (typeof instanceId !== 'string' || instanceId.length === 0 || instanceId.length > MAX_INSTANCE_ID_LENGTH) return;
+    if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || Math.abs(startedAt) > MAX_DATE_MS) return;
+    const request: HandoffRequest = { instanceId, startedAt };
     if (request.instanceId === this.instanceId || !this.isNewer(request)) return;
     this.stepDownFor(request).catch((err) => {
       console.error(`❌ [LEADER] Stepping down for ${this.options.lockKey} failed:`, err);
@@ -204,9 +294,16 @@ export class LeaderElection {
    * in flight are dropped), then releases the lock, so two instances never process at once.
    * If the lock can't be released cleanly, the connection is closed, which releases it too.
    */
-  private async stepDownFor(request: HandoffRequest): Promise<void> {
-    const client = this.client;
-    if (!this.isLeader || !client) return;
+  private stepDownFor(request: HandoffRequest): Promise<void> {
+    if (!this.isLeader || !this.client) return Promise.resolve();
+    const handoff = this.handOver(this.client, request).finally(() => {
+      if (this.handoff === handoff) this.handoff = null;
+    });
+    this.handoff = handoff;
+    return handoff;
+  }
+
+  private async handOver(client: LeaderClient, request: HandoffRequest): Promise<void> {
     this.isLeader = false;
     this.yieldedUntil = Date.now() + this.yieldGraceMs;
     // Stop leading first, then give up the lock. If anything fails, onLose included, closing
@@ -218,7 +315,7 @@ export class LeaderElection {
           `(started ${new Date(request.startedAt).toISOString()}) takes over from ${this.instanceId}`,
       );
       await this.options.beforeRelease?.();
-      await client.query(`UNLISTEN "${this.options.handoffChannel}"`);
+      // It stays LISTENing, to hear if the newer leader resigns and take over again
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [this.options.lockKey]);
     } catch (err) {
       console.error(`❌ [LEADER] Releasing ${this.options.lockKey} failed; closing the connection instead:`, err);
@@ -253,6 +350,7 @@ export class LeaderElection {
   private async dropConnection(reason: string): Promise<void> {
     const client = this.client;
     this.client = null;
+    this.listening = false;
     if (this.isLeader) {
       this.isLeader = false;
       console.warn(`⚠️ [LEADER] Lost leadership for ${this.options.lockKey} (${reason})`);

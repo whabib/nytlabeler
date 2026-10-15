@@ -229,6 +229,15 @@ export async function releaseFirehoseLeadership() {
 }
 
 /**
+ * Stops competing for firehose leadership and, if leading, hands it over cleanly: closes
+ * the firehose, lets posts being labeled finish, then tells the standbys so one takes over
+ * at once. Used when the instance shuts down.
+ */
+export async function resignFirehoseLeadership() {
+  await leadership?.resign();
+}
+
+/**
  * Connects to the Jetstream firehose endpoint and subscribes to commits.
  */
 function connect() {

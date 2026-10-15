@@ -490,6 +490,152 @@ describe('LeaderElection handoff', () => {
     assert.deepStrictEqual(events, ['leader acquired']);
   });
 
+  test('when the leader resigns, a standby takes over at once, not at its next retry', async () => {
+    const leader = instance('leader', 2_000);
+    leader.election.start();
+    await wait(50);
+    // An older standby: it can't ask for a handoff, and it retries only every 10 seconds
+    const standby = instance('standby', 1_000, { retryMs: 10_000 });
+    standby.election.start();
+    await wait(50);
+    assert.strictEqual(standby.election.isLeader, false);
+
+    const stopWatching = watchForTwoLeaders();
+    await leader.election.resign();
+    await wait(50);
+    assert.strictEqual(stopWatching(), 0, 'Two instances led at the same time');
+    assert.strictEqual(standby.election.isLeader, true);
+    assert.strictEqual(leader.election.isLeader, false);
+    assert.ok(!db.sessions.has(leader.sessions[0]), 'The resigned instance closed its connection');
+    assert.deepStrictEqual(events, ['leader acquired', 'leader lost (lock held: true)', 'standby acquired']);
+  });
+
+  test('resigning lets work under way finish before releasing the lock', async () => {
+    const leader = instance('leader', 2_000, {
+      beforeRelease: async () => {
+        await wait(30);
+        events.push(`leader drained (lock held: ${db.lockOwner !== null})`);
+      },
+    });
+    leader.election.start();
+    await wait(50);
+    instance('standby', 1_000, { retryMs: 10_000 }).election.start();
+    await wait(50);
+
+    await leader.election.resign();
+    await wait(50);
+    assert.deepStrictEqual(events, [
+      'leader acquired', 'leader lost (lock held: true)', 'leader drained (lock held: true)', 'standby acquired',
+    ]);
+  });
+
+  test('an instance that stepped down takes over again at once when the newer leader resigns', async () => {
+    // A long grace period: without the notice, it would wait it out
+    const old = instance('old', 1_000, { yieldGraceMs: 10_000, retryMs: 10_000 });
+    old.election.start();
+    await wait(50);
+    const newer = instance('new', 2_000);
+    newer.election.start();
+    await wait(100);
+    assert.strictEqual(newer.election.isLeader, true);
+
+    // Like a short-lived second instance being scaled in
+    await newer.election.resign();
+    await wait(50);
+    assert.strictEqual(old.election.isLeader, true);
+    assert.deepStrictEqual(events, ['old acquired', 'old lost (lock held: true)', 'new acquired', 'new lost (lock held: true)', 'old acquired']);
+  });
+
+  test('resigning during a step-down waits for the step-down to finish its work before closing', async () => {
+    let finishWork: () => void = () => {};
+    const old = instance('old', 1_000, {
+      beforeRelease: () => new Promise<void>((resolve) => {
+        finishWork = () => {
+          events.push(`old drained (lock held by old: ${db.lockOwner === old.sessions[0]})`);
+          resolve();
+        };
+      }),
+    });
+    old.election.start();
+    await wait(50);
+    instance('new', 2_000).election.start();
+    await wait(50); // The old leader is stepping down, still holding the lock while it drains
+    assert.strictEqual(db.lockOwner, old.sessions[0]);
+
+    let resigned = false;
+    const resigning = old.election.resign().then(() => {
+      resigned = true;
+    });
+    await wait(50);
+    assert.strictEqual(resigned, false, 'It must wait for the step-down under way');
+    assert.strictEqual(db.lockOwner, old.sessions[0], 'The lock stays held until the work finishes');
+    assert.ok(db.sessions.has(old.sessions[0]), 'The connection stays open meanwhile');
+
+    finishWork();
+    await resigning;
+    assert.ok(!db.sessions.has(old.sessions[0]), 'Then it closes its connection');
+    await wait(50);
+    assert.deepStrictEqual(events, [
+      'old acquired', 'old lost (lock held: true)', 'old drained (lock held by old: true)', 'new acquired',
+    ]);
+  });
+
+  test('if releasing the lock fails while resigning, closing the connection releases it', async () => {
+    const leader = instance('leader', 2_000);
+    leader.election.start();
+    await wait(50);
+    const standby = instance('standby', 1_000, { retryMs: 20 });
+    standby.election.start();
+    await wait(30);
+    leader.sessions[0].failUnlock = true;
+
+    await leader.election.resign();
+    assert.ok(!db.sessions.has(leader.sessions[0]));
+    await wait(60);
+    assert.strictEqual(standby.election.isLeader, true, 'The standby took over on its next retry');
+  });
+
+  test('a standby resigning just stops, and a leader ignores release notices', async () => {
+    const leader = instance('leader', 2_000);
+    leader.election.start();
+    await wait(50);
+    const standby = instance('standby', 1_000, { retryMs: 10_000 });
+    standby.election.start();
+    await wait(30);
+
+    await standby.election.resign();
+    leader.sessions[0].emit('notification', { channel: CHANNEL, payload: JSON.stringify({ released: 'someone' }) });
+    await wait(30);
+    assert.strictEqual(leader.election.isLeader, true);
+    assert.strictEqual(db.lockOwner, leader.sessions[0]);
+    assert.ok(!db.sessions.has(standby.sessions[0]));
+    assert.deepStrictEqual(events, ['leader acquired']);
+  });
+
+  test('ignores malformed release notices and its own', async () => {
+    const tries: number[] = [];
+    const standby = instance('standby', 1_000, { retryMs: 10_000, handoffPollMs: 10_000 });
+    // The lock stays with another session, so every attempt fails; count the attempts
+    db.lockOwner = new FakeSession(db);
+    standby.election.start();
+    await wait(30);
+    const session = standby.sessions[0];
+    const originalQuery = session.query.bind(session);
+    session.query = async (text: string, values?: unknown[]) => {
+      if (text.includes('pg_try_advisory_lock')) tries.push(Date.now());
+      return originalQuery(text, values);
+    };
+    for (const payload of ['not json', '{}', '{"released":5}', '{"released":""}', JSON.stringify({ released: 'x'.repeat(201) }), '{"released":"standby"}']) {
+      session.emit('notification', { channel: CHANNEL, payload });
+    }
+    await wait(30);
+    assert.strictEqual(tries.length, 0, 'None of them should trigger a lock attempt');
+
+    session.emit('notification', { channel: CHANNEL, payload: '{"released":"leader"}' });
+    await wait(30);
+    assert.strictEqual(tries.length, 1, 'A valid notice triggers one');
+  });
+
   test('rejects a channel name that is not a plain identifier', () => {
     assert.throws(() => instance('x', 1, { handoffChannel: 'bad"; DROP TABLE x; --' }), /Invalid handoff channel/);
   });
@@ -562,6 +708,40 @@ describe('LeaderElection (Postgres)', { skip: !testDatabaseUrl && 'TEST_DATABASE
       assert.strictEqual(old.isLeader, false);
     } finally {
       await Promise.all([old.stop(), newer.stop()]);
+    }
+  });
+
+  test('a standby takes over at once when the leader resigns, through Postgres NOTIFY', async () => {
+    const lockKey = `nytlabeler:test:${Date.now()}:${Math.random()}`;
+    const handoffChannel = `nytlabeler_test_resign_${process.pid}`;
+    const make = (instanceId: string, startedAt: number, retryMs: number) =>
+      new LeaderElection({
+        lockKey,
+        handoffChannel,
+        instanceId,
+        startedAt,
+        createClient: () => new pg.Client({ connectionString: testDatabaseUrl }),
+        retryMs,
+        handoffPollMs: 10,
+        onAcquire: () => {},
+        onLose: () => {},
+      });
+    const leader = make('leader', Date.now(), 50);
+    // Older, so it can't ask for a handoff, and it retries only every 10 seconds
+    const standby = make('standby', Date.now() - 60_000, 10_000);
+    try {
+      leader.start();
+      await wait(200);
+      standby.start();
+      await wait(300);
+      assert.strictEqual(leader.isLeader, true);
+      assert.strictEqual(standby.isLeader, false);
+
+      await leader.resign();
+      await wait(300);
+      assert.strictEqual(standby.isLeader, true);
+    } finally {
+      await Promise.all([leader.stop(), standby.stop()]);
     }
   });
 });
