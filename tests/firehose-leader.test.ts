@@ -546,6 +546,40 @@ describe('LeaderElection handoff', () => {
     assert.deepStrictEqual(events, ['old acquired', 'old lost (lock held: true)', 'new acquired', 'new lost (lock held: true)', 'old acquired']);
   });
 
+  test('resigning during a step-down waits for the step-down to finish its work before closing', async () => {
+    let finishWork: () => void = () => {};
+    const old = instance('old', 1_000, {
+      beforeRelease: () => new Promise<void>((resolve) => {
+        finishWork = () => {
+          events.push(`old drained (lock held by old: ${db.lockOwner === old.sessions[0]})`);
+          resolve();
+        };
+      }),
+    });
+    old.election.start();
+    await wait(50);
+    instance('new', 2_000).election.start();
+    await wait(50); // The old leader is stepping down, still holding the lock while it drains
+    assert.strictEqual(db.lockOwner, old.sessions[0]);
+
+    let resigned = false;
+    const resigning = old.election.resign().then(() => {
+      resigned = true;
+    });
+    await wait(50);
+    assert.strictEqual(resigned, false, 'It must wait for the step-down under way');
+    assert.strictEqual(db.lockOwner, old.sessions[0], 'The lock stays held until the work finishes');
+    assert.ok(db.sessions.has(old.sessions[0]), 'The connection stays open meanwhile');
+
+    finishWork();
+    await resigning;
+    assert.ok(!db.sessions.has(old.sessions[0]), 'Then it closes its connection');
+    await wait(50);
+    assert.deepStrictEqual(events, [
+      'old acquired', 'old lost (lock held: true)', 'old drained (lock held by old: true)', 'new acquired',
+    ]);
+  });
+
   test('if releasing the lock fails while resigning, closing the connection releases it', async () => {
     const leader = instance('leader', 2_000);
     leader.election.start();

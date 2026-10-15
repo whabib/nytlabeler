@@ -93,6 +93,8 @@ export class LeaderElection {
   /** A tick is under way; a wake-up then runs the next one straight after it. */
   private ticking = false;
   private wakeRequested = false;
+  /** A step-down for a newer instance under way: it still holds the lock until it finishes. */
+  private handoff: Promise<void> | null = null;
 
   constructor(private readonly options: LeaderElectionOptions) {
     this.retryMs = options.retryMs ?? 10_000;
@@ -133,6 +135,9 @@ export class LeaderElection {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (!wasLeader || !client) {
+      // Stepping down for a newer instance: it holds the lock until work under way finishes,
+      // so let it complete rather than cut it short (the shutdown deadline still applies)
+      await this.handoff;
       await this.dropConnection('stopped');
       return;
     }
@@ -289,9 +294,16 @@ export class LeaderElection {
    * in flight are dropped), then releases the lock, so two instances never process at once.
    * If the lock can't be released cleanly, the connection is closed, which releases it too.
    */
-  private async stepDownFor(request: HandoffRequest): Promise<void> {
-    const client = this.client;
-    if (!this.isLeader || !client) return;
+  private stepDownFor(request: HandoffRequest): Promise<void> {
+    if (!this.isLeader || !this.client) return Promise.resolve();
+    const handoff = this.handOver(this.client, request).finally(() => {
+      if (this.handoff === handoff) this.handoff = null;
+    });
+    this.handoff = handoff;
+    return handoff;
+  }
+
+  private async handOver(client: LeaderClient, request: HandoffRequest): Promise<void> {
     this.isLeader = false;
     this.yieldedUntil = Date.now() + this.yieldGraceMs;
     // Stop leading first, then give up the lock. If anything fails, onLose included, closing
