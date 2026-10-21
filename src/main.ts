@@ -7,12 +7,16 @@ if (typeof global.WebSocket === 'undefined') {
 
 import { validateConfig } from './config.js';
 import { loadActiveAuthors, prepareLabelStore, initLabelStoreGate } from './labeler.js';
-import { initFirehose } from './jetstream.js';
+import { initFirehose, resignFirehoseLeadership } from './jetstream.js';
 import { startWebServer } from './server.js';
 import { loadSetting } from './database.js';
+import { installShutdownHandlers } from './shutdown.js';
 
 async function bootstrap() {
   console.log('🏁 Starting NY Times Bluesky Labeler Service...');
+
+  // On SIGTERM (Cloud Run stopping this instance), hand firehose leadership over before exiting
+  installShutdownHandlers({ resign: resignFirehoseLeadership });
   
   // 1. Validate environment configuration
   validateConfig();

@@ -155,7 +155,11 @@ DEPLOY_FLAGS=(
   "--set-env-vars" "${ENV_VARS}"
   "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
   "--allow-unauthenticated"
-  "--max-instances" "1"
+  # One instance handles the load; the second is headroom. With a limit of 1, Cloud Run
+  # can't start a replacement while the only instance is stuck or being replaced, and
+  # answers every request with 429 meanwhile (22 minutes on 2026-10-14). Leader election
+  # keeps a second instance off the firehose, so posts are still labeled once.
+  "--max-instances" "2"
   # Cloud Run closes WebSocket connections at the request timeout (default 300s), forcing
   # subscribeLabels clients to reconnect and replay. It also bounds how long an old instance
   # lingers (holding firehose leadership) after a deploy or instance replacement.
