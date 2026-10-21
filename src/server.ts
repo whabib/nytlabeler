@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER } from './config.js';
+import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER, APP_VERSION } from './config.js';
 import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } from './labeler.js';
 import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
@@ -313,6 +313,7 @@ app.get('/api/stats', (req, res) => {
   res.json({
     ...stats,
     uptime: Math.floor((Date.now() - new Date(stats.startTime).getTime()) / 1000),
+    version: APP_VERSION,
     env: ENV,
     dryRun: DRY_RUN,
     serviceUrl: SERVICE_URL,

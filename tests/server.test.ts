@@ -285,6 +285,16 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should report the app version from package.json in the stats', cleanErrors(async () => {
+    const { readFileSync } = await import('node:fs');
+    const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    const res = await fetch('http://127.0.0.1:14100/api/stats');
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.match(version, /^\d+\.\d+\.\d+/);
+    assert.strictEqual(body.version, version);
+  }));
+
   test('should serve the NYT attribution logo unaltered', cleanErrors(async () => {
     const res = await fetch('http://127.0.0.1:14100/images/poweredby_nytimes_150a.png');
     assert.strictEqual(res.status, 200);
