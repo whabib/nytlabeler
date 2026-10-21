@@ -290,6 +290,34 @@ describe('Bluesky post links in the history', () => {
   }
 });
 
+describe('Dashboard version', () => {
+  async function versionShown(stats: Record<string, unknown>) {
+    const { window, document } = await loadDashboard({
+      '/api/authors': [],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false, ...stats },
+    });
+    const display = document.getElementById('version-display')!;
+    const result = { hidden: display.hidden, text: display.textContent!.replace(/\s+/g, ' ').trim(), images: injectedImages(document).length };
+    window.close();
+    return result;
+  }
+
+  test('shows the version under the uptime in the left rail', async () => {
+    assert.deepStrictEqual(await versionShown({ version: '1.5.0' }), { hidden: false, text: 'Version: 1.5.0', images: 0 });
+  });
+
+  test('stays hidden when the server reports no version', async () => {
+    assert.strictEqual((await versionShown({})).hidden, true);
+  });
+
+  test('shows the version as literal text, never as HTML', async () => {
+    const shown = await versionShown({ version: PAYLOAD });
+    assert.strictEqual(shown.text, `Version: ${PAYLOAD}`);
+    assert.strictEqual(shown.images, 0);
+  });
+});
+
 describe('Reports page', () => {
   let window: any;
   let document: Document;

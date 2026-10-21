@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +8,11 @@ const __dirname = path.dirname(__filename);
 
 // Load .env file
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+/** The app's version, from package.json (one level up from both src/ and dist/). */
+export const APP_VERSION: string = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'),
+).version;
 
 export const ENV = process.env.ENV || 'development';
 export const IS_DEV = ENV === 'development';

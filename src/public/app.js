@@ -74,6 +74,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const diagLastLabelEl = document.getElementById('diag-last-label');
   const throughputEl = document.getElementById('throughput-val');
   const uptimeEl = document.getElementById('uptime-val');
+  const versionDisplayEl = document.getElementById('version-display');
+  const versionEl = document.getElementById('version-val');
   const wsStatusEl = document.getElementById('ws-status');
   const envBadgeEl = document.getElementById('env-badge');
   const dryRunBannerEl = document.getElementById('dry-run-banner');
@@ -759,6 +761,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (dryRunBannerEl) {
         if (config.dryRun) dryRunBannerEl.classList.remove('hidden');
         else dryRunBannerEl.classList.add('hidden');
+      }
+
+      if (versionEl && versionDisplayEl && typeof config.version === 'string' && config.version) {
+        versionEl.textContent = config.version;
+        versionDisplayEl.hidden = false;
       }
 
       if (setHandle) showHandle(setHandle, config);
