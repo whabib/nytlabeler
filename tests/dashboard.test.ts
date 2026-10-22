@@ -299,6 +299,11 @@ describe('Label Universe page', () => {
     });
     const heading = document.getElementById('authors-count-badge')!.closest('h3')!;
     assert.strictEqual(heading.firstChild!.textContent!.trim(), '✍️ Opinion Authors and Reporters in the Politics Sections');
+    // The rule from LABEL_AUTHOR_IDS_SQL
+    assert.strictEqual(
+      heading.closest('.card-header')!.querySelector('p')!.textContent,
+      'Authors with at least 2 opinion articles, or at least 2 articles in U.S. Politics.',
+    );
     window.close();
   });
 });
