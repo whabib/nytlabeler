@@ -11,8 +11,12 @@
 /** Hosts whose redirects are followed. trib.al is a shortener many publishers use. */
 const SHORT_LINK_HOSTS = new Set(['nyti.ms', 'www.nyti.ms', 'trib.al']);
 
-/** Short links written into post text (link cards and facets carry full URLs). */
-const SHORT_LINK_REGEX = /https?:\/\/(?:www\.)?(?:nyti\.ms|trib\.al)\/[^\s"']+/gi;
+/**
+ * Short links written into post text (link cards and facets carry full URLs). Their codes
+ * are only letters, digits, - and _, so a closing parenthesis or period after the link in
+ * the text isn't taken as part of it.
+ */
+const SHORT_LINK_REGEX = /https?:\/\/(?:www\.)?(?:nyti\.ms|trib\.al)\/[A-Za-z0-9_-]+/gi;
 
 const MAX_HOPS = 4;
 const REQUEST_TIMEOUT_MS = 3_000;

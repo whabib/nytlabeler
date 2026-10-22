@@ -58,6 +58,15 @@ describe('extractShortLinks', () => {
     assert.deepStrictEqual(extractShortLinks(record).sort(), ['https://nyti.ms/3VZJtSp', 'https://nyti.ms/inText', 'https://trib.al/gUvJkPN']);
   });
 
+  test('leaves punctuation after a short link in the text out of the link', () => {
+    for (const text of ['Read (https://nyti.ms/3VZJtSp)', 'Read https://nyti.ms/3VZJtSp.', 'Read https://nyti.ms/3VZJtSp, then this', '"https://nyti.ms/3VZJtSp"!']) {
+      assert.deepStrictEqual(extractShortLinks({ text }), ['https://nyti.ms/3VZJtSp'], text);
+    }
+    // Link cards and facets carry the full URL, which is kept as it is
+    const uri = 'https://trib.al/gUvJkPN?utm_source=x';
+    assert.deepStrictEqual(extractShortLinks({ embed: { $type: 'app.bsky.embed.external', external: { uri } } }), [uri]);
+  });
+
   test('ignores posts without short links, and malformed records', () => {
     assert.deepStrictEqual(extractShortLinks({ text: 'https://www.nytimes.com/x https://bit.ly/y' }), []);
     for (const record of [null, undefined, {}, { facets: 'x' }, { facets: [null, { features: 'x' }] }, { embed: { $type: 'app.bsky.embed.external', external: { uri: 5 } } }]) {
