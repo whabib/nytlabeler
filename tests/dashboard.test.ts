@@ -290,6 +290,19 @@ describe('Bluesky post links in the history', () => {
   }
 });
 
+describe('Label Universe page', () => {
+  test('titles the author labels for both opinion writers and politics reporters', async () => {
+    const { window, document } = await loadDashboard({
+      '/api/authors': [{ id: 1, name: 'Jamelle Bouie', total_articles: 5 }],
+      '/api/categories': { sections: [], subsections: [] },
+      '/api/stats': { env: 'development', dryRun: false },
+    });
+    const heading = document.getElementById('authors-count-badge')!.closest('h3')!;
+    assert.strictEqual(heading.firstChild!.textContent!.trim(), '✍️ Opinion Authors and Reporters in the Politics Sections');
+    window.close();
+  });
+});
+
 describe('Dashboard version', () => {
   async function versionShown(stats: Record<string, unknown>) {
     const { window, document } = await loadDashboard({
