@@ -4,6 +4,7 @@ import { DATABASE_URL, ENV, FIREHOSE_URL, WANTED_COLLECTION } from './config.js'
 import { loadSetting, lookupArticle, normalizeNytUrl, type ArticleMatch } from './database.js';
 import { LeaderElection, type LeaderClient } from './firehose-leader.js';
 import { issueLabelsForPost, stats } from './labeler.js';
+import { extractShortLinks, resolveShortLink } from './short-links.js';
 
 export let socket: WebSocket | null = null;
 let reconnectDelay = 1000;
@@ -312,6 +313,17 @@ function connect() {
       if (dataObj.commit.operation === 'create' && dataObj.commit.record) {
         const record = dataObj.commit.record;
         const nytUrls = extractNytUrls(record);
+        // NYT accounts mostly post nyti.ms short links; follow them to the article
+        const shortLinks = extractShortLinks(record);
+        if (shortLinks.length > 0) {
+          const resolved = await Promise.all(shortLinks.map((link) => resolveShortLink(link, isNytUrl)));
+          shortLinks.forEach((link, i) => {
+            const destination = resolved[i];
+            if (!destination) return;
+            console.log('🔗 [SHORT LINK] %s leads to %s', link, destination);
+            nytUrls.push(destination);
+          });
+        }
         if (nytUrls.length === 0) return;
 
         const postUri = `at://${dataObj.did}/${WANTED_COLLECTION}/${dataObj.commit.rkey}`;

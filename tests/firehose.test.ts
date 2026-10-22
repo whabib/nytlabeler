@@ -11,6 +11,7 @@ const {
 } = await import('../src/jetstream.js');
 const { stats, setLabelerServer } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
+const { configureShortLinks } = await import('../src/short-links.js');
 
 /** A pg Client stand-in whose advisory lock result the test controls. */
 class FakeClient extends EventEmitter {
@@ -410,6 +411,39 @@ describe('Firehose leadership', () => {
     savedSetting = 'false';
     await waitFor(() => open().length === 0 && !stats.firehoseConnected);
     assert.strictEqual(stats.firehoseEnabled, false);
+  });
+
+  test('labels a post whose only link is a nyti.ms short link, by following it to the article', async () => {
+    const requested: string[] = [];
+    configureShortLinks({
+      fetch: async (url: string) => {
+        requested.push(url);
+        const location = url === 'https://nyti.ms/3VZJtSp' ? 'https://trib.al/gUvJkPN' : 'https://www.nytimes.com/2026/09/23/us/story.html?smid=bsky-nytimes';
+        return new Response(null, { status: 301, headers: { location } });
+      },
+    });
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+
+    // Like the NYT's own posts: a link card to nyti.ms, and no nytimes.com URL anywhere
+    open()[0].send(JSON.stringify({
+      kind: 'commit',
+      did: 'did:plc:nytimes',
+      commit: {
+        collection: 'app.bsky.feed.post',
+        operation: 'create',
+        rkey: 'shortlink',
+        record: {
+          text: 'In Opinion: our columnist writes',
+          embed: { $type: 'app.bsky.embed.external', external: { uri: 'https://nyti.ms/3VZJtSp', title: 'T', description: '' } },
+        },
+      },
+    }));
+    await waitFor(() => created.length > 0);
+    assert.deepStrictEqual(created, ['us']);
+    assert.strictEqual(lookups, 1);
+    assert.deepStrictEqual(requested, ['https://nyti.ms/3VZJtSp', 'https://trib.al/gUvJkPN'], 'The article page itself is never fetched');
   });
 
   test('labels a post once when it links the same article more than once', async () => {
