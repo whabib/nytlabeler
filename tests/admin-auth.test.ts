@@ -1,9 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { createAdminAuth, readCookie, SESSION_TTL_MS } from '../src/admin-auth.js';
+import { createAdminAuth, createSessionSecret, readCookie, SESSION_TTL_MS } from '../src/admin-auth.js';
+
+const SECRET = createSessionSecret();
 
 describe('createAdminAuth', () => {
-  const auth = createAdminAuth('correct horse battery staple');
+  const auth = createAdminAuth('correct horse battery staple', SECRET);
   const now = 1_800_000_000_000;
 
   test('accepts only the exact password', async () => {
@@ -32,11 +34,26 @@ describe('createAdminAuth', () => {
       `${expiresAt}.${flipped}`, // Altered signature
       `${Number(expiresAt) + 1000}.${signature}`, // Extended expiry
       `${now + 10 * SESSION_TTL_MS}.${signature}`, // Far-future expiry
-      createAdminAuth('another password').createSession(now), // Signed with another password
+      createAdminAuth('another password', SECRET).createSession(now), // Signed with another password
       '', 'not-a-token', `${expiresAt}.`, `.${signature}`, `${expiresAt}.${signature}.extra`, undefined,
     ]) {
       assert.strictEqual(auth.isValidSession(bad, now), false, String(bad));
     }
+  });
+
+  test('knowing the password is not enough to make a session: the shared secret is needed too', () => {
+    const guessed = createAdminAuth('correct horse battery staple', createSessionSecret()).createSession(now);
+    assert.strictEqual(auth.isValidSession(guessed, now), false);
+    // The same password and secret, as on another instance, make sessions that are accepted
+    const otherInstance = createAdminAuth('correct horse battery staple', SECRET);
+    assert.strictEqual(auth.isValidSession(otherInstance.createSession(now), now), true);
+  });
+
+  test('requires a session secret when a password is set', () => {
+    assert.throws(() => createAdminAuth('a password'), /session secret/);
+    assert.throws(() => createAdminAuth('a password', 'too short'), /session secret/);
+    assert.match(createSessionSecret(), /^[0-9a-f]{64}$/);
+    assert.notStrictEqual(createSessionSecret(), createSessionSecret());
   });
 
   test('without a password, nobody can sign in', async () => {

@@ -7,7 +7,7 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 /** Fixed, so every instance derives the same signing key from the same password. */
 const SCRYPT_SALT = 'nytlabeler admin password v1';
-/** 32 bytes to check the password against, then 32 for the session signing key. */
+/** 32 bytes to check the password against, then 32 that go into the session signing key. */
 const DERIVED_LENGTH = 64;
 /** scrypt's defaults (N = 2^14, r = 8): tens of milliseconds and 16 MB per check. */
 const SCRYPT_OPTIONS: crypto.ScryptOptions = { N: 16_384, r: 8, p: 1 };
@@ -28,18 +28,23 @@ export interface AdminAuth {
 /**
  * Admin sign-in with a single shared password (the ADMIN_PASSWORD environment variable).
  *
- * A session is "<expiry>.<signature>": an HMAC of the expiry, keyed from the password. Any
- * instance can check it without shared storage, and changing the password signs everyone out.
+ * A session is "<expiry>.<signature>": an HMAC of the expiry. The signing key combines a
+ * random secret that all instances share (sessionSecret) with the password, so:
+ * - knowing or guessing the password isn't enough to make a session (every guess has to go
+ *   through the rate-limited sign-in);
+ * - any instance can check a session without shared session storage;
+ * - changing the password signs everyone out.
  *
- * Both the password check and the signing key come from scrypt, a deliberately slow password
- * hash, so a session cookie (or anything else derived from the password) can't be used to
- * guess the password quickly offline.
+ * The password check uses scrypt, a deliberately slow password hash.
  */
-export function createAdminAuth(password: string | undefined): AdminAuth {
+export function createAdminAuth(password: string | undefined, sessionSecret?: string): AdminAuth {
   const configured = typeof password === 'string' && password.length > 0;
+  if (configured && (typeof sessionSecret !== 'string' || sessionSecret.length < 32)) {
+    throw new Error('A session secret of at least 32 characters is required');
+  }
   const derived = configured ? crypto.scryptSync(password, SCRYPT_SALT, DERIVED_LENGTH, SCRYPT_OPTIONS) : null;
   const verifier = derived?.subarray(0, 32) ?? null;
-  const signingKey = derived?.subarray(32) ?? null;
+  const signingKey = derived ? crypto.createHmac('sha256', sessionSecret!).update(derived.subarray(32)).digest() : null;
 
   const sign = (expiresAt: number) =>
     crypto.createHmac('sha256', signingKey!).update(String(expiresAt)).digest('base64url');
@@ -86,6 +91,11 @@ export function readCookie(header: string | undefined, name: string): string | u
     if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
   }
   return undefined;
+}
+
+/** A new random session secret (see createAdminAuth). */
+export function createSessionSecret(): string {
+  return crypto.randomBytes(32).toString('hex');
 }
 
 function scrypt(password: string): Promise<Buffer> {

@@ -420,6 +420,38 @@ describe('WebSocket Protocol Proxy', () => {
     }
   }));
 
+  test('should not count requests from other sites against the sign-in allowance', cleanErrors(async () => {
+    configureAdminPassword('test-admin-password');
+    const headers = { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.8' };
+    try {
+      for (let i = 0; i < LOGIN_RATE_LIMIT.limit + 2; i++) {
+        const forged = await fetch(`${ORIGIN}/api/admin/login`, {
+          method: 'POST',
+          headers: { ...headers, Origin: 'https://evil.example' },
+          body: JSON.stringify({ password: 'guess' }),
+        });
+        assert.strictEqual(forged.status, 403);
+      }
+      const real = await fetch(`${ORIGIN}/api/admin/login`, {
+        method: 'POST',
+        headers: { ...headers, Origin: ORIGIN },
+        body: JSON.stringify({ password: 'test-admin-password' }),
+      });
+      assert.strictEqual(real.status, 200, 'The visitor can still sign in');
+    } finally {
+      loginLimiter.resetKey('198.51.100.8');
+    }
+  }));
+
+  test('should not accept a session made with the password alone', cleanErrors(async () => {
+    configureAdminPassword('test-admin-password', 'the-real-shared-session-secret-0123456789');
+    const { createAdminAuth, createSessionSecret } = await import('../src/admin-auth.js');
+    const forged = createAdminAuth('test-admin-password', createSessionSecret()).createSession();
+    const res = await fetch(`${ORIGIN}/api/admin/session`, { headers: { Cookie: `nytlabeler_admin=${forged}` } });
+    assert.deepStrictEqual(await res.json(), { configured: true, authenticated: false });
+    configureAdminPassword('test-admin-password');
+  }));
+
   test('should ignore firehose toggle messages on the dashboard WebSocket', cleanErrors(async () => {
     const { stats } = await import('../src/labeler.js');
     const before = stats.firehoseEnabled;

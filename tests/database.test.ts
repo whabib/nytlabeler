@@ -1,6 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
-import { normalizeNytUrl, slugify, saveSetting, loadSetting, getDistinctCategories, getActiveAuthors, pool } from '../src/database.js';
+import { normalizeNytUrl, slugify, saveSetting, loadSetting, loadOrCreateSetting, getDistinctCategories, getActiveAuthors, pool } from '../src/database.js';
 
 import { formatDisplayName } from '../src/utils.js';
 
@@ -110,6 +110,38 @@ describe('Database Helpers', () => {
       const firstSelectArgs = selectCalls[0].arguments[1];
       assert.strictEqual(firstSelectArgs[0], firstInsertArgs[0], 'Should query the exact same environment it saved to');
       assert.strictEqual(firstSelectArgs[1], 'firehose_enabled');
+    });
+
+    test('should create a setting once, and give every caller the stored value', async (t) => {
+      const stored = new Map<string, string>();
+      t.mock.method(pool, 'query', async (sql: string, params: string[] = []) => {
+        if (sql.includes('INSERT INTO "_Settings"') && sql.includes('DO NOTHING')) {
+          const key = `${params[0]}:${params[1]}`;
+          if (!stored.has(key)) stored.set(key, params[2]);
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT value FROM "_Settings"')) {
+          const value = stored.get(`${params[0]}:${params[1]}`);
+          return { rows: value === undefined ? [] : [{ value }] };
+        }
+        return { rows: [] };
+      });
+
+      // Two instances starting at once, each with its own candidate value
+      const [first, second] = await Promise.all([
+        loadOrCreateSetting('admin_session_secret', () => 'from-instance-a'),
+        loadOrCreateSetting('admin_session_secret', () => 'from-instance-b'),
+      ]);
+      assert.strictEqual(first, second);
+      assert.strictEqual(await loadOrCreateSetting('admin_session_secret', () => 'later'), first);
+      assert.strictEqual(stored.size, 1);
+    });
+
+    test('should fail, rather than make up a value, when the database is unreachable', async (t) => {
+      t.mock.method(pool, 'query', async () => {
+        throw new Error('ECONNREFUSED');
+      });
+      await assert.rejects(loadOrCreateSetting('admin_session_secret', () => 'x'));
     });
 
     test('should fall back to default value if setting is not found', async (t) => {
