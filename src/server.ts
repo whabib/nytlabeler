@@ -331,7 +331,7 @@ app.get('/api/admin/session', (req, res) => {
   res.json({ configured: adminAuth.configured, authenticated: isAdmin(req) });
 });
 
-app.post('/api/admin/login', loginLimiter, (req, res) => {
+app.post('/api/admin/login', loginLimiter, async (req, res) => {
   if (!isSameOriginRequest(req)) {
     res.status(403).json({ error: 'Forbidden' });
     return;
@@ -340,7 +340,7 @@ app.post('/api/admin/login', loginLimiter, (req, res) => {
     res.status(503).json({ error: 'No admin password is set (ADMIN_PASSWORD).' });
     return;
   }
-  if (!adminAuth.checkPassword(req.body?.password)) {
+  if (!(await adminAuth.checkPassword(req.body?.password))) {
     res.status(401).json({ error: 'Incorrect password.' });
     return;
   }

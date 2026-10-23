@@ -5,11 +5,20 @@ export const SESSION_COOKIE = 'nytlabeler_admin';
 /** How long a sign-in lasts. */
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
+/** Fixed, so every instance derives the same signing key from the same password. */
+const SCRYPT_SALT = 'nytlabeler admin password v1';
+/** 32 bytes to check the password against, then 32 for the session signing key. */
+const DERIVED_LENGTH = 64;
+/** scrypt's defaults (N = 2^14, r = 8): tens of milliseconds and 16 MB per check. */
+const SCRYPT_OPTIONS: crypto.ScryptOptions = { N: 16_384, r: 8, p: 1 };
+/** Longer passwords are refused rather than hashed. */
+const MAX_PASSWORD_LENGTH = 1024;
+
 export interface AdminAuth {
   /** Whether an admin password is set; without one, nobody can sign in. */
   readonly configured: boolean;
   /** Whether a submitted password is the admin password. */
-  checkPassword(password: unknown): boolean;
+  checkPassword(password: unknown): Promise<boolean>;
   /** A new session token, valid for SESSION_TTL_MS. */
   createSession(now?: number): string;
   /** Whether a session token is genuine and unexpired. */
@@ -21,13 +30,16 @@ export interface AdminAuth {
  *
  * A session is "<expiry>.<signature>": an HMAC of the expiry, keyed from the password. Any
  * instance can check it without shared storage, and changing the password signs everyone out.
+ *
+ * Both the password check and the signing key come from scrypt, a deliberately slow password
+ * hash, so a session cookie (or anything else derived from the password) can't be used to
+ * guess the password quickly offline.
  */
 export function createAdminAuth(password: string | undefined): AdminAuth {
   const configured = typeof password === 'string' && password.length > 0;
-  const passwordDigest = configured ? sha256(password) : null;
-  const signingKey = configured
-    ? crypto.createHmac('sha256', password).update('nytlabeler admin session v1').digest()
-    : null;
+  const derived = configured ? crypto.scryptSync(password, SCRYPT_SALT, DERIVED_LENGTH, SCRYPT_OPTIONS) : null;
+  const verifier = derived?.subarray(0, 32) ?? null;
+  const signingKey = derived?.subarray(32) ?? null;
 
   const sign = (expiresAt: number) =>
     crypto.createHmac('sha256', signingKey!).update(String(expiresAt)).digest('base64url');
@@ -35,10 +47,14 @@ export function createAdminAuth(password: string | undefined): AdminAuth {
   return {
     configured,
 
-    checkPassword(submitted) {
-      if (!passwordDigest || typeof submitted !== 'string' || submitted.length === 0) return false;
-      // Compare fixed-length digests, so the time taken reveals nothing about the password
-      return crypto.timingSafeEqual(sha256(submitted), passwordDigest);
+    async checkPassword(submitted) {
+      if (!verifier || typeof submitted !== 'string' || submitted.length === 0 || submitted.length > MAX_PASSWORD_LENGTH) {
+        return false;
+      }
+      // Asynchronous, so hashing doesn't hold up the firehose; fixed-length values compared in
+      // constant time, so the time taken reveals nothing about the password
+      const candidate = await scrypt(submitted);
+      return crypto.timingSafeEqual(candidate.subarray(0, 32), verifier);
     },
 
     createSession(now = Date.now()) {
@@ -72,6 +88,8 @@ export function readCookie(header: string | undefined, name: string): string | u
   return undefined;
 }
 
-function sha256(value: string): Buffer {
-  return crypto.createHash('sha256').update(value, 'utf8').digest();
+function scrypt(password: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, SCRYPT_SALT, DERIVED_LENGTH, SCRYPT_OPTIONS, (err, key) => (err ? reject(err) : resolve(key)));
+  });
 }

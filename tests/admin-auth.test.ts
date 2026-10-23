@@ -6,11 +6,14 @@ describe('createAdminAuth', () => {
   const auth = createAdminAuth('correct horse battery staple');
   const now = 1_800_000_000_000;
 
-  test('accepts only the exact password', () => {
+  test('accepts only the exact password', async () => {
     assert.strictEqual(auth.configured, true);
-    assert.strictEqual(auth.checkPassword('correct horse battery staple'), true);
-    for (const wrong of ['correct horse battery stapl', 'Correct horse battery staple', 'correct horse battery staple ', '', null, undefined, 42, ['correct horse battery staple']]) {
-      assert.strictEqual(auth.checkPassword(wrong), false, String(wrong));
+    assert.strictEqual(await auth.checkPassword('correct horse battery staple'), true);
+    for (const wrong of [
+      'correct horse battery stapl', 'Correct horse battery staple', 'correct horse battery staple ', '', 'x'.repeat(5000),
+      null, undefined, 42, ['correct horse battery staple'],
+    ]) {
+      assert.strictEqual(await auth.checkPassword(wrong), false, String(wrong).slice(0, 40));
     }
   });
 
@@ -36,12 +39,12 @@ describe('createAdminAuth', () => {
     }
   });
 
-  test('without a password, nobody can sign in', () => {
+  test('without a password, nobody can sign in', async () => {
     for (const password of [undefined, '']) {
       const locked = createAdminAuth(password);
       assert.strictEqual(locked.configured, false);
-      assert.strictEqual(locked.checkPassword(''), false);
-      assert.strictEqual(locked.checkPassword('anything'), false);
+      assert.strictEqual(await locked.checkPassword(''), false);
+      assert.strictEqual(await locked.checkPassword('anything'), false);
       assert.strictEqual(locked.isValidSession(auth.createSession(now), now), false);
       assert.throws(() => locked.createSession(now));
     }
