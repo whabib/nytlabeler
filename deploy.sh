@@ -153,7 +153,8 @@ DEPLOY_FLAGS=(
   "--region" "${REGION}"
   "--project" "${PROJECT_ID}"
   "--set-env-vars" "${ENV_VARS}"
-  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
+  # ADMIN_PASSWORD signs in to the dashboard's Settings page (the service only, not the job)
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION},ADMIN_PASSWORD=ADMIN_PASSWORD:latest"
   "--allow-unauthenticated"
   # One instance handles the load; the second is headroom. With a limit of 1, Cloud Run
   # can't start a replacement while the only instance is stuck or being replaced, and

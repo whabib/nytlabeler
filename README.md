@@ -111,6 +111,10 @@ BSKY_SIGNING_KEY=your-signing-key
 BSKY_IDENTIFIER=your-account.bsky.social
 BSKY_PASSWORD=your-app-password
 
+# Password for the dashboard's Settings page (including turning the firehose on or off).
+# Without it, Settings stay locked.
+ADMIN_PASSWORD=choose-a-long-password
+
 # PostgreSQL Database Configuration (unified connection string)
 DATABASE_URL=postgresql://nytdata@localhost:5432/nytdata
 
@@ -204,6 +208,13 @@ To maximize security, sensitive environment credentials are retrieved dynamicall
   - Add secret versions with appropriate values for development and production.
   - Apply version aliases (`dev` and `prod`) to those versions.
   - Mapped automatically via `--set-secrets` using the corresponding environment version alias (e.g., `BSKY_SIGNING_KEY:dev` or `BSKY_SIGNING_KEY:prod`).
+
+* **Dashboard Settings password (`ADMIN_PASSWORD`)**:
+  - The Settings page, and turning the firehose on or off, require signing in with this password. Without it, Settings stay locked.
+  - Create a Google Secret named `ADMIN_PASSWORD` before deploying (the deploy fails if it's missing), for example:
+    `printf '%s' 'choose-a-long-password' | gcloud secrets create ADMIN_PASSWORD --data-file=-`
+  - Mapped to the service (not the job) via `--set-secrets` as `ADMIN_PASSWORD:latest`. To change it, add a new secret version and redeploy; changing it signs everyone out.
+  - A sign-in lasts 12 hours, in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over HTTPS). After 10 wrong passwords from one address, sign-in is blocked for 15 minutes.
 
 * **VPC Connectivity (to VPC private IP `10.73.128.3`)**:
   - **Gen 2 Direct VPC Egress**: Use `--direct-vpc <network_name>`

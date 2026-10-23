@@ -864,6 +864,49 @@ body {
   color: var(--text-muted);
 }
 
+/* Settings sign-in */
+.settings-login {
+  max-width: 420px;
+}
+
+.primary-button,
+.secondary-button {
+  border-radius: 10px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-button {
+  background: var(--neon-purple);
+  border: none;
+  color: var(--text-primary);
+}
+
+.secondary-button {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.primary-button:hover,
+.primary-button:focus-visible,
+.secondary-button:hover,
+.secondary-button:focus-visible {
+  filter: brightness(1.15);
+}
+
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-error {
+  color: var(--neon-red);
+  font-size: 0.85rem;
+}
+
 /* Settings tab form styling */
 .settings-grid {
   display: grid;

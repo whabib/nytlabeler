@@ -43,7 +43,7 @@ function cleanErrors<T extends (...args: any[]) => any>(fn: T): T {
 }
 
 // Dynamically import to ensure process.env is read correctly
-const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES, REPORTS_RATE_LIMIT, reportsLimiter } = await import('../src/server.js');
+const { server, wss, labelerProxyWss, PROXY_MAX_BUFFERED_BYTES, REPORTS_RATE_LIMIT, reportsLimiter, configureAdminPassword, LOGIN_RATE_LIMIT, loginLimiter } = await import('../src/server.js');
 const { setLabelerServer, initLabelStoreGate, prepareLabelStore } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
 const { metricsPool } = await import('../src/post-articles.js');
@@ -305,10 +305,137 @@ describe('WebSocket Protocol Proxy', () => {
     assert.strictEqual(createHash('sha256').update(bytes).digest('hex'), '0f1b067b82f2316562be46fe066a2f7050afedea52fb4f13a24d82b80ca0807e');
   }));
 
+  const ORIGIN = 'http://127.0.0.1:14100';
+
+  /** Signs in with the admin password and returns the session cookie ("name=value"). */
+  async function signIn(password = 'test-admin-password') {
+    configureAdminPassword('test-admin-password');
+    const res = await fetch(`${ORIGIN}/api/admin/login`, {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    return { res, cookie: (res.headers.get('set-cookie') ?? '').split(';')[0] };
+  }
+
+  test('should sign in with the admin password, setting a locked-down session cookie', cleanErrors(async () => {
+    const { res, cookie } = await signIn();
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(await res.json(), { authenticated: true });
+    const setCookie = res.headers.get('set-cookie')!;
+    assert.match(setCookie, /^nytlabeler_admin=\d+\.[A-Za-z0-9_-]{43};/);
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /SameSite=Strict/);
+    assert.match(setCookie, /Path=\//);
+    assert.match(setCookie, /Max-Age=43200/);
+    assert.doesNotMatch(setCookie, /Secure/, 'Plain HTTP (local development) gets no Secure flag');
+
+    const session = await fetch(`${ORIGIN}/api/admin/session`, { headers: { Cookie: cookie } });
+    assert.deepStrictEqual(await session.json(), { configured: true, authenticated: true });
+    const anonymous = await fetch(`${ORIGIN}/api/admin/session`);
+    assert.deepStrictEqual(await anonymous.json(), { configured: true, authenticated: false });
+  }));
+
+  test('should mark the session cookie Secure behind Cloud Run\'s HTTPS proxy', cleanErrors(async () => {
+    configureAdminPassword('test-admin-password');
+    const res = await fetch(`${ORIGIN}/api/admin/login`, {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https' },
+      body: JSON.stringify({ password: 'test-admin-password' }),
+    });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers.get('set-cookie')!, /Secure/);
+  }));
+
+  test('should refuse a wrong password, a cross-origin sign-in, and sign-in without a password set', cleanErrors(async () => {
+    const wrong = await signIn('not the password');
+    assert.strictEqual(wrong.res.status, 401);
+    assert.strictEqual(wrong.res.headers.get('set-cookie'), null);
+
+    const crossOrigin = await fetch(`${ORIGIN}/api/admin/login`, {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: 'test-admin-password' }),
+    });
+    assert.strictEqual(crossOrigin.status, 403);
+
+    configureAdminPassword(undefined);
+    try {
+      const res = await fetch(`${ORIGIN}/api/admin/login`, {
+        method: 'POST',
+        headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: '' }),
+      });
+      assert.strictEqual(res.status, 503);
+      assert.deepStrictEqual(await (await fetch(`${ORIGIN}/api/admin/session`)).json(), { configured: false, authenticated: false });
+    } finally {
+      configureAdminPassword('test-admin-password');
+      loginLimiter.resetKey('127.0.0.1');
+      loginLimiter.resetKey('::ffff:127.0.0.1');
+    }
+  }));
+
+  test('should only let a signed-in admin turn the firehose on or off', cleanErrors(async () => {
+    const toggle = (headers: Record<string, string>) =>
+      fetch(`${ORIGIN}/api/firehose/toggle`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json', ...headers }, body: '{"enabled":"maybe"}' });
+
+    assert.strictEqual((await toggle({})).status, 401);
+    const { cookie } = await signIn();
+    const [name, token] = cookie.split('=');
+    const tampered = `${name}=${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+    assert.strictEqual((await toggle({ Cookie: tampered })).status, 401);
+    // Signed in, the request gets as far as validating its body
+    assert.strictEqual((await toggle({ Cookie: cookie })).status, 400);
+    // Still same-origin only, even signed in
+    assert.strictEqual((await toggle({ Cookie: cookie, Origin: 'https://evil.example' })).status, 403);
+
+    // A changed password signs everyone out
+    configureAdminPassword('a new password');
+    assert.strictEqual((await toggle({ Cookie: cookie })).status, 401);
+    configureAdminPassword('test-admin-password');
+  }));
+
+  test('should sign out by clearing the session cookie', cleanErrors(async () => {
+    const { cookie } = await signIn();
+    const res = await fetch(`${ORIGIN}/api/admin/logout`, { method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie } });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers.get('set-cookie')!, /^nytlabeler_admin=;.*Expires=Thu, 01 Jan 1970/);
+  }));
+
+  test('should block sign-in after repeated wrong passwords from one address', cleanErrors(async () => {
+    configureAdminPassword('test-admin-password');
+    const attempt = (password: string) =>
+      fetch(`${ORIGIN}/api/admin/login`, {
+        method: 'POST',
+        headers: { Origin: ORIGIN, 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.7' },
+        body: JSON.stringify({ password }),
+      });
+    try {
+      for (let i = 0; i < LOGIN_RATE_LIMIT.limit; i++) assert.strictEqual((await attempt('guess')).status, 401);
+      const blocked = await attempt('test-admin-password');
+      assert.strictEqual(blocked.status, 429, 'Even the right password is refused while blocked');
+      assert.deepStrictEqual(await blocked.json(), { error: 'Too many sign-in attempts. Try again later.' });
+    } finally {
+      loginLimiter.resetKey('198.51.100.7');
+    }
+  }));
+
+  test('should ignore firehose toggle messages on the dashboard WebSocket', cleanErrors(async () => {
+    const { stats } = await import('../src/labeler.js');
+    const before = stats.firehoseEnabled;
+    const ws = new WebSocket('ws://127.0.0.1:14100/ws', { headers: { Origin: ORIGIN } });
+    await new Promise((resolve) => ws.once('message', resolve)); // The initial stats
+    ws.send(JSON.stringify({ type: 'toggle', enabled: !before }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    ws.close();
+    assert.strictEqual(stats.firehoseEnabled, before);
+  }));
+
   test('should return 400 when firehose toggle has no JSON body', cleanErrors(async () => {
+    const { cookie } = await signIn();
     const res = await fetch('http://127.0.0.1:14100/api/firehose/toggle', {
       method: 'POST',
-      headers: { Origin: 'http://127.0.0.1:14100' },
+      headers: { Origin: 'http://127.0.0.1:14100', Cookie: cookie },
     });
     assert.strictEqual(res.status, 400);
     assert.deepStrictEqual(await res.json(), { error: "Invalid 'enabled' value. Must be a boolean." });

@@ -34,13 +34,18 @@ async function loadDashboard(responses: Record<string, unknown>) {
   const window: any = dom.window;
   let socket: any;
   const sent: unknown[] = []; // Messages the dashboard sends to its server
-  // An Error stands for a failed request (HTTP 500); a function returns a promise, for slow
-  // responses or network failures (a rejected fetch)
-  window.fetch = async (url: string) => {
+  // An Error stands for a failed request (HTTP 500); a function gets the request options and
+  // returns a promise, for slow responses or network failures (a rejected fetch); { status,
+  // body } answers with that HTTP status
+  window.fetch = async (url: string, init?: RequestInit) => {
     let response = responses[url];
-    if (typeof response === 'function') response = await response();
+    if (typeof response === 'function') response = await response(init);
     if (response instanceof Error) return { ok: false, status: 500, json: async () => ({ error: response.message }) };
-    return { ok: true, json: async () => response };
+    if (response && typeof response === 'object' && 'status' in response && 'body' in response) {
+      const { status, body } = response as { status: number; body: unknown };
+      return { ok: status < 400, status, json: async () => body };
+    }
+    return { ok: true, status: 200, json: async () => response };
   };
   window.WebSocket = class {
     static OPEN = 1;
@@ -545,17 +550,138 @@ describe('Database status badge', () => {
   });
 });
 
+describe('Settings sign-in', () => {
+  const base = {
+    '/api/authors': [],
+    '/api/categories': { sections: [], subsections: [] },
+    '/api/stats': { env: 'development', dryRun: false },
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  function visible(document: Document) {
+    return {
+      login: !document.getElementById('settings-login')!.hidden,
+      content: !document.getElementById('settings-content')!.hidden,
+      signOut: !document.getElementById('settings-logout')!.hidden,
+    };
+  }
+
+  async function submitPassword(window: any, document: Document, password: string) {
+    (document.getElementById('settings-password') as HTMLInputElement).value = password;
+    document.getElementById('settings-login-form')!.dispatchEvent(new window.Event('submit', { cancelable: true }));
+    await settle();
+  }
+
+  test('hides the settings, and shows the sign-in form, until signed in', async () => {
+    const { window, document } = await loadDashboard({ ...base, '/api/admin/session': { configured: true, authenticated: false } });
+    assert.deepStrictEqual(visible(document), { login: true, content: false, signOut: false });
+    assert.strictEqual((document.getElementById('settings-password') as HTMLInputElement).type, 'password');
+    window.close();
+  });
+
+  test('signs in with the right password, then shows the settings', async () => {
+    let signedIn = false;
+    const attempts: unknown[] = [];
+    const { window, document } = await loadDashboard({
+      ...base,
+      '/api/admin/session': async () => ({ configured: true, authenticated: signedIn }),
+      '/api/admin/login': async (init: RequestInit) => {
+        const { password } = JSON.parse(String(init.body));
+        attempts.push(password);
+        if (password !== 'right') return { status: 401, body: { error: 'Incorrect password.' } };
+        signedIn = true;
+        return { authenticated: true };
+      },
+    });
+
+    await submitPassword(window, document, 'wrong');
+    assert.deepStrictEqual(visible(document), { login: true, content: false, signOut: false });
+    const error = document.getElementById('settings-login-error')!;
+    assert.strictEqual(error.hidden, false);
+    assert.strictEqual(error.textContent, 'Incorrect password.');
+
+    await submitPassword(window, document, 'right');
+    assert.deepStrictEqual(attempts, ['wrong', 'right']);
+    assert.deepStrictEqual(visible(document), { login: false, content: true, signOut: true });
+    assert.strictEqual((document.getElementById('settings-password') as HTMLInputElement).value, '', 'The password is cleared');
+    window.close();
+  });
+
+  test('tells the user when sign-in is blocked after too many attempts', async () => {
+    const { window, document } = await loadDashboard({
+      ...base,
+      '/api/admin/session': { configured: true, authenticated: false },
+      '/api/admin/login': { status: 429, body: { error: 'Too many sign-in attempts. Try again later.' } },
+    });
+    await submitPassword(window, document, 'guess');
+    assert.strictEqual(document.getElementById('settings-login-error')!.textContent, 'Too many sign-in attempts. Try again later.');
+    window.close();
+  });
+
+  test('explains that settings are locked when no password is set on the server', async () => {
+    const { window, document } = await loadDashboard({ ...base, '/api/admin/session': { configured: false, authenticated: false } });
+    assert.deepStrictEqual(visible(document), { login: true, content: false, signOut: false });
+    assert.match(document.getElementById('settings-login-error')!.textContent!, /no admin password is set/);
+    assert.strictEqual((document.getElementById('settings-login-button') as HTMLButtonElement).disabled, true);
+    window.close();
+  });
+
+  test('signs out, hiding the settings again', async () => {
+    let signedIn = true;
+    const { window, document } = await loadDashboard({
+      ...base,
+      '/api/admin/session': async () => ({ configured: true, authenticated: signedIn }),
+      '/api/admin/logout': async () => {
+        signedIn = false;
+        return { authenticated: false };
+      },
+    });
+    assert.deepStrictEqual(visible(document), { login: false, content: true, signOut: true });
+    (document.getElementById('settings-logout') as HTMLButtonElement).click();
+    await settle();
+    assert.deepStrictEqual(visible(document), { login: true, content: false, signOut: false });
+    window.close();
+  });
+
+  test('when the sign-in has expired, undoes the switch and asks to sign in again', async () => {
+    let signedIn = true;
+    const { window, document } = await loadDashboard({
+      ...base,
+      '/api/admin/session': async () => ({ configured: true, authenticated: signedIn }),
+      '/api/firehose/toggle': async () => {
+        signedIn = false;
+        return { status: 401, body: { error: 'Sign in to change settings.' } };
+      },
+    });
+    const toggle = document.getElementById('firehose-switch') as HTMLInputElement;
+    const original = toggle.checked;
+    toggle.checked = !original;
+    toggle.dispatchEvent(new window.Event('change'));
+    await settle();
+    assert.strictEqual(toggle.checked, original);
+    assert.strictEqual(toggle.disabled, false);
+    assert.deepStrictEqual(visible(document), { login: true, content: false, signOut: false });
+    window.close();
+  });
+});
+
 describe('Feed Listener switch', () => {
   let window: any;
   let document: Document;
   let send: (message: unknown) => void;
   let sent: unknown[];
+  const toggles: unknown[] = [];
 
   before(async () => {
     ({ window, document, send, sent } = await loadDashboard({
       '/api/authors': [],
       '/api/categories': { sections: [], subsections: [] },
       '/api/stats': { env: 'development', dryRun: false },
+      '/api/admin/session': { configured: true, authenticated: true },
+      '/api/firehose/toggle': async (init: RequestInit) => {
+        toggles.push(JSON.parse(String(init.body)));
+        return { success: true, firehoseEnabled: true };
+      },
     }));
     send({ type: 'init', stats: { ...BASE_STATS, firehoseEnabled: false }, recentLabels: [] });
   });
@@ -575,11 +701,13 @@ describe('Feed Listener switch', () => {
     assert.strictEqual((document.getElementById('firehose-switch') as HTMLInputElement).checked, false);
   });
 
-  test('sends the new setting to the server when switched', () => {
+  test('sends the new setting to the server over HTTP, which carries the sign-in, when switched', async () => {
     const toggle = document.getElementById('firehose-switch') as HTMLInputElement;
     toggle.checked = true;
     toggle.dispatchEvent(new window.Event('change'));
-    assert.deepStrictEqual(sent.at(-1), { type: 'toggle', enabled: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepStrictEqual(toggles, [{ enabled: true }]);
+    assert.ok(!sent.some((message: any) => message?.type === 'toggle'), 'Nothing is sent over the WebSocket');
   });
 });
 
