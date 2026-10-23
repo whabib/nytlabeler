@@ -21,6 +21,11 @@ export interface LeaderElectionOptions {
   /** Runs after each successful heartbeat while leading. Errors are logged, not fatal. */
   onLeaderTick?: () => Promise<void> | void;
   /**
+   * Runs on each regular retry while on standby (not the quick polls after a handoff
+   * request), e.g. to keep state that's shown to users current. Errors are logged, not fatal.
+   */
+  onStandbyTick?: () => Promise<void> | void;
+  /**
    * Postgres channel for step-down requests and release notices. With one, a standby asks
    * the leader to hand over, and the leader steps down for a newer instance (see
    * stepDownFor); a leader that resigns tells standbys, so one takes over at once. Without
@@ -217,6 +222,7 @@ export class LeaderElection {
           if (this.handoffPollsLeft > 0) nextDelay = this.handoffPollMs;
         }
       }
+      if (!this.isLeader && this.running && nextDelay === this.retryMs) await this.runStandbyTick();
     } catch (err) {
       console.error(`❌ [LEADER] Leadership check for ${this.options.lockKey} failed:`, err);
       await this.dropConnection('connection error');
@@ -328,6 +334,14 @@ export class LeaderElection {
       await this.options.onLeaderTick?.();
     } catch (err) {
       console.error(`❌ [LEADER] Leader tick for ${this.options.lockKey} failed:`, err);
+    }
+  }
+
+  private async runStandbyTick(): Promise<void> {
+    try {
+      await this.options.onStandbyTick?.();
+    } catch (err) {
+      console.error(`❌ [LEADER] Standby tick for ${this.options.lockKey} failed:`, err);
     }
   }
 

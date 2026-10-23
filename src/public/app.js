@@ -61,6 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastLabelAtStr = null;
   // Recent labels from the database (all instances), used when this instance has none of its own
   let dbRecentLabels = [];
+  // After a toggle, keep showing the new setting this long before trusting live updates again.
+  // The toggle may have reached another instance than this page's live connection; that one
+  // picks the saved setting up on its next check, within 10 seconds.
+  const TOGGLE_SETTLE_MS = 12000;
   let isToggling = false;
   let lastToggleTime = 0; // Cooldown to prevent race conditions with in-flight heartbeats
   const maxConsoleLines = 50;
@@ -251,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
       diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
     }
 
-    if (firehoseSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling && (Date.now() - lastToggleTime > 3000)) {
+    if (firehoseSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling && (Date.now() - lastToggleTime > TOGGLE_SETTLE_MS)) {
       firehoseSwitchEl.checked = stats.firehoseEnabled;
     }
 

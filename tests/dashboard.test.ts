@@ -709,6 +709,25 @@ describe('Feed Listener switch', () => {
     assert.deepStrictEqual(toggles, [{ enabled: true }]);
     assert.ok(!sent.some((message: any) => message?.type === 'toggle'), 'Nothing is sent over the WebSocket');
   });
+
+  test('keeps showing the new setting when another instance still reports the old one', async () => {
+    // The toggle above may have reached another instance; this page's live connection can
+    // report the old setting until it picks up the saved one (within 10 seconds)
+    const toggle = document.getElementById('firehose-switch') as HTMLInputElement;
+    const realNow = window.Date.now;
+    const startedAt = realNow();
+    try {
+      window.Date.now = () => startedAt + 8_000; // Past the old 3-second cooldown
+      send({ type: 'heartbeat', stats: { ...BASE_STATS, firehoseEnabled: false } });
+      assert.strictEqual(toggle.checked, true);
+
+      window.Date.now = () => startedAt + 13_000; // By now every instance has the saved setting
+      send({ type: 'heartbeat', stats: { ...BASE_STATS, firehoseEnabled: false } });
+      assert.strictEqual(toggle.checked, false, 'After a while, live updates are trusted again');
+    } finally {
+      window.Date.now = realNow;
+    }
+  });
 });
 
 describe('NYT API attribution', () => {
