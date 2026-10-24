@@ -393,6 +393,20 @@ describe('Firehose leadership', () => {
     assert.strictEqual(open().length, 1, 'A stale reconnect must not open a second subscription');
   });
 
+  test('a standby keeps its shown setting current, without connecting to the firehose', async () => {
+    startFirehoseListener(); // On standby: another instance holds the lock
+    await wait(60);
+    assert.strictEqual(stats.firehoseLeader, false);
+    assert.strictEqual(stats.firehoseEnabled, true);
+
+    // Another instance turned the firehose off and saved it
+    savedSetting = 'false';
+    await waitFor(() => stats.firehoseEnabled === false);
+    savedSetting = 'true';
+    await waitFor(() => stats.firehoseEnabled === true);
+    assert.strictEqual(connections.length, 0, 'A standby must never connect');
+  });
+
   test('the leader follows the saved setting, whichever instance a toggle reached', async () => {
     savedSetting = 'false';
     lockFree = true;

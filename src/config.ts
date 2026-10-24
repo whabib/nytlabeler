@@ -27,6 +27,10 @@ export const SIGNING_KEY = process.env.BSKY_SIGNING_KEY || '';
 export const BSKY_IDENTIFIER = process.env.BSKY_IDENTIFIER || '';
 export const BSKY_PASSWORD = process.env.BSKY_PASSWORD || '';
 
+// Password for the dashboard's Settings page (and turning the firehose on or off). Without
+// one, nobody can sign in, so those stay locked.
+export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+
 export const SERVICE_URL = IS_DEV
   ? 'https://nyt-labeler-dev.warren.nyc'
   : 'https://nyt-labeler.warren.nyc';

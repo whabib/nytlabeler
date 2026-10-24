@@ -317,58 +317,74 @@
             <h2>System Settings</h2>
             <p>Manage and inspect environment and database connection variables.</p>
           </div>
+          <button type="button" class="secondary-button" id="settings-logout" hidden>Sign out</button>
         </header>
 
-        <div class="settings-grid">
-          <!-- Firehose Settings -->
-          <div class="settings-card glass">
-            <h3>📡 Firehose</h3>
-            <div class="settings-form">
-              <div class="form-group">
-                <div class="switch-row">
-                  <label for="firehose-switch">Feed Listener</label>
-                  <label class="switch">
-                    <input type="checkbox" id="firehose-switch" checked>
-                    <span class="slider"></span>
-                  </label>
+        <!-- Shown until signed in with the admin password -->
+        <div class="settings-card glass settings-login" id="settings-login" hidden>
+          <h3>🔒 Sign in to view and change settings</h3>
+          <form id="settings-login-form" class="settings-form">
+            <div class="form-group">
+              <label for="settings-password">Password</label>
+              <input type="password" id="settings-password" class="glass-input" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="primary-button" id="settings-login-button">Sign in</button>
+            <p class="form-error" id="settings-login-error" role="alert" hidden></p>
+          </form>
+        </div>
+
+        <div id="settings-content" hidden>
+          <div class="settings-grid">
+            <!-- Firehose Settings -->
+            <div class="settings-card glass">
+              <h3>📡 Firehose</h3>
+              <div class="settings-form">
+                <div class="form-group">
+                  <div class="switch-row">
+                    <label for="firehose-switch">Feed Listener</label>
+                    <label class="switch">
+                      <input type="checkbox" id="firehose-switch" checked>
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                  <p class="setting-help">Turns reading the Bluesky firehose, and so labeling new posts, on or off. The setting is saved, and the instance processing the firehose applies it within about 10 seconds.</p>
                 </div>
-                <p class="setting-help">Turns reading the Bluesky firehose, and so labeling new posts, on or off. The setting is saved, and the instance processing the firehose applies it within about 10 seconds.</p>
               </div>
             </div>
-          </div>
 
-          <!-- ATProto Settings -->
-          <div class="settings-card glass">
-            <h3>🔑 ATProto Credentials</h3>
-            <div class="settings-form">
-              <div class="form-group">
-                <label>Active Handle</label>
-                <!-- Links to the account on bsky.app once the handle loads -->
-                <a id="set-handle" class="glass-input handle-link" target="_blank" rel="noopener noreferrer"></a>
-              </div>
-              <div class="form-group">
-                <label>Service URL (DID Root)</label>
-                <input type="text" id="set-url" class="glass-input" readonly>
-              </div>
-              <div class="form-group">
-                <label>Did</label>
-                <input type="text" id="set-did" class="glass-input" readonly>
+            <!-- ATProto Settings -->
+            <div class="settings-card glass">
+              <h3>🔑 ATProto Credentials</h3>
+              <div class="settings-form">
+                <div class="form-group">
+                  <label>Active Handle</label>
+                  <!-- Links to the account on bsky.app once the handle loads -->
+                  <a id="set-handle" class="glass-input handle-link" target="_blank" rel="noopener noreferrer"></a>
+                </div>
+                <div class="form-group">
+                  <label>Service URL (DID Root)</label>
+                  <input type="text" id="set-url" class="glass-input" readonly>
+                </div>
+                <div class="form-group">
+                  <label>Did</label>
+                  <input type="text" id="set-did" class="glass-input" readonly>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- Database Settings -->
-          <div class="settings-card glass">
-            <h3>🗄️ PostgreSQL Database</h3>
-            <div class="settings-form">
-              <div class="form-group">
-                <label>Database Name</label>
-                <input type="text" id="set-db-name" class="glass-input" readonly>
-              </div>
-              <div class="form-group">
-                <label>Connection Uptime Status</label>
-                <div class="db-status-badge checking" id="db-status">
-                  <span class="status-dot yellow"></span> Checking…
+            <!-- Database Settings -->
+            <div class="settings-card glass">
+              <h3>🗄️ PostgreSQL Database</h3>
+              <div class="settings-form">
+                <div class="form-group">
+                  <label>Database Name</label>
+                  <input type="text" id="set-db-name" class="glass-input" readonly>
+                </div>
+                <div class="form-group">
+                  <label>Connection Uptime Status</label>
+                  <div class="db-status-badge checking" id="db-status">
+                    <span class="status-dot yellow"></span> Checking…
+                  </div>
                 </div>
               </div>
             </div>

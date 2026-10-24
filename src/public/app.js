@@ -61,6 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastLabelAtStr = null;
   // Recent labels from the database (all instances), used when this instance has none of its own
   let dbRecentLabels = [];
+  // After a toggle, keep showing the new setting this long before trusting live updates again.
+  // The toggle may have reached another instance than this page's live connection; that one
+  // picks the saved setting up on its next check, within 10 seconds.
+  const TOGGLE_SETTLE_MS = 12000;
   let isToggling = false;
   let lastToggleTime = 0; // Cooldown to prevent race conditions with in-flight heartbeats
   const maxConsoleLines = 50;
@@ -86,6 +90,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const diagLastTimeEl = document.getElementById('diag-last-time');
   const diagReconnectsEl = document.getElementById('diag-reconnects');
   const firehoseSwitchEl = document.getElementById('firehose-switch');
+  const settingsLoginEl = document.getElementById('settings-login');
+  const settingsLoginFormEl = document.getElementById('settings-login-form');
+  const settingsPasswordEl = document.getElementById('settings-password');
+  const settingsLoginButtonEl = document.getElementById('settings-login-button');
+  const settingsLoginErrorEl = document.getElementById('settings-login-error');
+  const settingsContentEl = document.getElementById('settings-content');
+  const settingsLogoutEl = document.getElementById('settings-logout');
 
   // Terminal DOM Elements
   const terminalLogsEl = document.getElementById('terminal-logs');
@@ -244,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
       diagReconnectsEl.textContent = stats.reconnectCount.toLocaleString();
     }
 
-    if (firehoseSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling && (Date.now() - lastToggleTime > 3000)) {
+    if (firehoseSwitchEl && typeof stats.firehoseEnabled === 'boolean' && !isToggling && (Date.now() - lastToggleTime > TOGGLE_SETTLE_MS)) {
       firehoseSwitchEl.checked = stats.firehoseEnabled;
     }
 
@@ -930,27 +941,8 @@ document.addEventListener('DOMContentLoaded', () => {
       firehoseSwitchEl.disabled = true;
       const enabled = firehoseSwitchEl.checked;
 
-      // If WebSocket is open, toggle deterministically over WebSocket (targets current container instance)
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(JSON.stringify({ type: 'toggle', enabled }));
-          console.log(`📡 Sent toggle command via WebSocket: ${enabled ? 'ENABLE' : 'DISABLE'}`);
-        } catch (err) {
-          console.error('❌ Failed to send toggle over WebSocket, falling back to HTTP POST:', err);
-          await toggleViaHttp(enabled);
-        } finally {
-          // Keep a brief lock to let transition messages settle, then release input
-          setTimeout(() => {
-            isToggling = false;
-            firehoseSwitchEl.disabled = false;
-            lastToggleTime = Date.now(); // Extend/reset cooldown
-          }, 800);
-        }
-      } else {
-        // Fall back to HTTP POST if WebSocket is disconnected
-        console.warn('⚠️ WebSocket not connected. Falling back to HTTP POST for toggle.');
-        await toggleViaHttp(enabled);
-      }
+      // Changing settings requires the admin sign-in, which the HTTP request carries
+      await toggleViaHttp(enabled);
     });
   }
 
@@ -963,6 +955,12 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         body: JSON.stringify({ enabled }),
       });
+      if (response.status === 401) {
+        // The sign-in expired: show the sign-in form again
+        firehoseSwitchEl.checked = !enabled;
+        await refreshAdminSession();
+        return;
+      }
       if (!response.ok) {
         throw new Error('Failed to toggle Jetstream listener');
       }
@@ -979,7 +977,78 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Settings sign-in: the page's settings stay hidden, and the switch locked, until signed in
+  function showSettings(session) {
+    const signedIn = Boolean(session?.authenticated);
+    if (settingsContentEl) settingsContentEl.hidden = !signedIn;
+    if (settingsLogoutEl) settingsLogoutEl.hidden = !signedIn;
+    if (settingsLoginEl) settingsLoginEl.hidden = signedIn;
+    if (!signedIn && session && !session.configured) {
+      showLoginError('Settings are locked: no admin password is set on the server (ADMIN_PASSWORD).');
+      if (settingsPasswordEl) settingsPasswordEl.disabled = true;
+      if (settingsLoginButtonEl) settingsLoginButtonEl.disabled = true;
+    }
+  }
+
+  function showLoginError(message) {
+    if (!settingsLoginErrorEl) return;
+    settingsLoginErrorEl.textContent = message || '';
+    settingsLoginErrorEl.hidden = !message;
+  }
+
+  async function refreshAdminSession() {
+    try {
+      const res = await fetch('/api/admin/session');
+      showSettings(res.ok ? await res.json() : null);
+    } catch (err) {
+      console.error('Failed to check the settings sign-in:', err);
+      showSettings(null);
+    }
+  }
+
+  if (settingsLoginFormEl) {
+    settingsLoginFormEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      showLoginError('');
+      if (settingsLoginButtonEl) settingsLoginButtonEl.disabled = true;
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: settingsPasswordEl ? settingsPasswordEl.value : '' }),
+        });
+        if (res.ok) {
+          if (settingsPasswordEl) settingsPasswordEl.value = '';
+          await refreshAdminSession();
+        } else if (res.status === 401) {
+          showLoginError('Incorrect password.');
+        } else if (res.status === 429) {
+          showLoginError('Too many sign-in attempts. Try again later.');
+        } else {
+          showLoginError('Sign-in failed. Try again.');
+        }
+      } catch (err) {
+        console.error('Sign-in failed:', err);
+        showLoginError('Sign-in failed. Try again.');
+      } finally {
+        if (settingsLoginButtonEl) settingsLoginButtonEl.disabled = false;
+      }
+    });
+  }
+
+  if (settingsLogoutEl) {
+    settingsLogoutEl.addEventListener('click', async () => {
+      try {
+        await fetch('/api/admin/logout', { method: 'POST' });
+      } catch (err) {
+        console.error('Sign-out failed:', err);
+      }
+      await refreshAdminSession();
+    });
+  }
+
   // Bootstrap Dashboard
+  refreshAdminSession();
   connectWebSocket();
   fetchUniverseData();
   fetchSystemConfig();

@@ -4,9 +4,10 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER, APP_VERSION } from './config.js';
+import { PORT, LABELER_PORT, DRY_RUN, ENV, DID, SERVICE_URL, BSKY_IDENTIFIER, APP_VERSION, ADMIN_PASSWORD } from './config.js';
+import { createAdminAuth, createSessionSecret, readCookie, SESSION_COOKIE, SESSION_TTL_MS, type AdminAuth } from './admin-auth.js';
 import { recentLabels, stats, IssuedLabelLog, labelerServer, labelStoreReady } from './labeler.js';
-import { getActiveAuthors, getDistinctCategories, saveSetting } from './database.js';
+import { getActiveAuthors, getDistinctCategories, loadOrCreateSetting, saveSetting } from './database.js';
 import { startFirehoseListener, stopFirehoseListener } from './jetstream.js';
 import { fetchLabelActivity, fetchRecentPostLabels } from './label-activity.js';
 import { fetchPopularArticlesReport, fetchAuthorsReport, fetchAuthorReport, REPORT_WINDOWS, AUTHOR_SCOPES, type AuthorScope } from './reports.js';
@@ -55,33 +56,10 @@ function isSameOriginRequest(request: http.IncomingMessage): boolean {
 wss.on('connection', (ws, request) => {
   clients.add(ws);
   console.log(`🔌 Dashboard client connected (Total: ${clients.size})`);
-  const canToggleFirehose = isSameOriginRequest(request);
 
-  // Send initial stats on connection
+  // Send initial stats on connection. The connection only receives updates: turning the
+  // firehose on or off goes through POST /api/firehose/toggle, which requires signing in.
   ws.send(JSON.stringify({ type: 'init', stats, recentLabels }));
-
-  ws.on('message', async (message) => {
-    try {
-      const data = JSON.parse(message.toString());
-      if (data.type === 'toggle') {
-        if (!canToggleFirehose) {
-          console.warn('⚠️ Ignoring unauthorized WS toggle request from non same-origin client');
-          return;
-        }
-        const { enabled } = data;
-        if (enabled === true) {
-          startFirehoseListener();
-          await saveSetting('firehose_enabled', 'true');
-        } else if (enabled === false) {
-          stopFirehoseListener();
-          await saveSetting('firehose_enabled', 'false');
-        }
-        broadcastStats();
-      }
-    } catch (err) {
-      console.error('❌ Failed to process WS message from dashboard:', err);
-    }
-  });
 
   ws.on('close', () => {
     clients.delete(ws);
@@ -322,9 +300,103 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// Admin sign-in for the Settings page, with the ADMIN_PASSWORD. Sessions are signed with a key
+// that also uses a random secret kept in the database, shared by all instances (see
+// createAdminAuth), loaded on first use.
+let adminPassword = ADMIN_PASSWORD;
+let adminAuth: Promise<AdminAuth> | null = null;
+
+function getAdminAuth(): Promise<AdminAuth> {
+  if (!adminPassword) return Promise.resolve(createAdminAuth(undefined));
+  const password = adminPassword;
+  adminAuth ??= loadOrCreateSetting('admin_session_secret', createSessionSecret)
+    .then((secret) => createAdminAuth(password, secret))
+    .catch((err) => {
+      adminAuth = null; // Try again on the next request
+      throw err;
+    });
+  return adminAuth;
+}
+
+/** Replaces the admin password and session secret. Useful for unit testing. */
+export function configureAdminPassword(password: string | undefined, sessionSecret = 'test-session-secret-0123456789abcdef') {
+  adminPassword = password ?? '';
+  adminAuth = Promise.resolve(createAdminAuth(password, sessionSecret));
+}
+
+async function isAdmin(req: express.Request): Promise<boolean> {
+  const token = readCookie(req.headers.cookie, SESSION_COOKIE);
+  if (!token) return false;
+  try {
+    return (await getAdminAuth()).isValidSession(token);
+  } catch (err) {
+    console.error('❌ Could not check the admin session:', err);
+    return false;
+  }
+}
+
+function sessionCookieOptions(req: express.Request): express.CookieOptions {
+  // Secure whenever the dashboard is served over HTTPS (Cloud Run's proxy reports it)
+  return { httpOnly: true, sameSite: 'strict', secure: req.secure, path: '/' };
+}
+
+/** Rejects requests from other sites before they count against anything. */
+function requireSameOrigin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!isSameOriginRequest(req)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  next();
+}
+
+// Slows password guessing; successful sign-ins don't count
+export const LOGIN_RATE_LIMIT = { windowMs: 15 * 60_000, limit: 10 };
+export const loginLimiter = rateLimit({
+  ...LOGIN_RATE_LIMIT,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: 'Too many sign-in attempts. Try again later.' },
+});
+
+app.get('/api/admin/session', async (req, res) => {
+  res.json({ configured: Boolean(adminPassword), authenticated: await isAdmin(req) });
+});
+
+// The origin check comes first, so another site can't use up a visitor's sign-in allowance
+app.post('/api/admin/login', requireSameOrigin, loginLimiter, async (req, res) => {
+  let auth: AdminAuth;
+  try {
+    auth = await getAdminAuth();
+  } catch (err) {
+    console.error('❌ Sign-in unavailable: could not load the session secret:', err);
+    res.status(503).json({ error: 'Sign-in is unavailable right now.' });
+    return;
+  }
+  if (!auth.configured) {
+    res.status(503).json({ error: 'No admin password is set (ADMIN_PASSWORD).' });
+    return;
+  }
+  if (!(await auth.checkPassword(req.body?.password))) {
+    res.status(401).json({ error: 'Incorrect password.' });
+    return;
+  }
+  res.cookie(SESSION_COOKIE, auth.createSession(), { ...sessionCookieOptions(req), maxAge: SESSION_TTL_MS });
+  res.json({ authenticated: true });
+});
+
+app.post('/api/admin/logout', requireSameOrigin, (req, res) => {
+  res.clearCookie(SESSION_COOKIE, sessionCookieOptions(req));
+  res.json({ authenticated: false });
+});
+
 app.post('/api/firehose/toggle', async (req, res) => {
   if (!isSameOriginRequest(req)) {
     res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  if (!(await isAdmin(req))) {
+    res.status(401).json({ error: 'Sign in to change settings.' });
     return;
   }
   // Express 5 leaves req.body undefined when the request has no JSON body

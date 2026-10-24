@@ -185,6 +185,8 @@ function getLeadership(): LeaderElection {
     beforeRelease: () => waitForLabelingToFinish(handoffDrainTimeoutMs),
     // Dashboard toggles may reach any instance; the leader follows the saved setting
     onLeaderTick: syncWithSavedSetting,
+    // A standby's dashboard shows the setting too, and a toggle may have reached another instance
+    onStandbyTick: syncWithSavedSetting,
   });
   return leadership;
 }

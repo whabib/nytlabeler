@@ -186,6 +186,22 @@ export async function saveSetting(key: string, value: string): Promise<void> {
 }
 
 /**
+ * Loads a setting, first storing createValue() if there isn't one yet. Instances starting at
+ * the same time all end up with the same value. Throws if the database can't be reached.
+ */
+export async function loadOrCreateSetting(key: string, createValue: () => string): Promise<string> {
+  // Makes sure the table exists (and migrates an old one)
+  await loadSetting(key, '');
+  await pool.query(
+    `INSERT INTO "_Settings" (environment, key, value) VALUES ($1, $2, $3) ON CONFLICT (environment, key) DO NOTHING;`,
+    [ENV, key, createValue()],
+  );
+  const res = await pool.query(`SELECT value FROM "_Settings" WHERE environment = $1 AND key = $2;`, [ENV, key]);
+  if (res.rows.length === 0) throw new Error(`Setting ${key} could not be stored`);
+  return res.rows[0].value;
+}
+
+/**
  * Loads a system setting from the database (environment-aware).
  */
 export async function loadSetting(key: string, defaultValue: string): Promise<string> {

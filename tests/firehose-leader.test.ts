@@ -179,6 +179,39 @@ describe('LeaderElection', () => {
     );
   });
 
+  test('runs the standby tick on each retry while on standby, never while leading', async () => {
+    let lockFree = false;
+    let standbyTicks = 0;
+    let leaderTicks = 0;
+    const election = new LeaderElection({
+      lockKey: 'test',
+      createClient: () => new FakeClient(() => lockFree),
+      retryMs: 10,
+      onAcquire: () => {},
+      onLose: () => {},
+      onLeaderTick: () => {
+        leaderTicks++;
+      },
+      onStandbyTick: () => {
+        standbyTicks++;
+        if (standbyTicks === 1) throw new Error('setting lookup failed');
+      },
+    });
+    election.start();
+    await wait(60);
+    assert.ok(standbyTicks >= 2, `expected several standby ticks, got ${standbyTicks}`);
+    assert.strictEqual(leaderTicks, 0);
+
+    lockFree = true;
+    await wait(30);
+    assert.strictEqual(election.isLeader, true);
+    const standbyTicksWhenLeading = standbyTicks;
+    await wait(50);
+    assert.strictEqual(standbyTicks, standbyTicksWhenLeading, 'No standby ticks while leading');
+    assert.ok(leaderTicks >= 2);
+    await election.stop();
+  });
+
   test('runs the leader tick on each heartbeat, and a failing tick keeps leadership', async () => {
     let ticks = 0;
     const election = new LeaderElection({
