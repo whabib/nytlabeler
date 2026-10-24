@@ -115,7 +115,8 @@ jobs:
 
       - name: Scan for vulnerabilities
         run: |
-          # Fail on any critical or high finding; list mediums and lows without failing
-          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 image --no-progress --scanners vuln "$@" nytlabeler:ci; }
+          # Fail on any critical or high finding; list mediums and lows without failing.
+          # .trivyignore lists accepted findings, each with its reason and an expiry date.
+          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.trivyignore:/trivyignore:ro" aquasec/trivy:0.74.0 image --no-progress --scanners vuln --ignorefile /trivyignore "$@" nytlabeler:ci; }
           scan --severity CRITICAL,HIGH --exit-code 1
           scan --severity MEDIUM,LOW --exit-code 0
