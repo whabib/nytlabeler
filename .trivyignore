@@ -1,0 +1,9 @@
+# Vulnerability findings the image scan accepts, each with the reason. Every entry expires,
+# so the scan fails again once it needs another look.
+
+# zod < 4.6.6: memory exhaustion validating oversized collections (GHSA-mrhx-c7xc-m3w5).
+# Only @atproto/api uses zod, and only the one-shot publish-definitions job loads it: it logs
+# in to bsky.social and updates the labeler record, so zod only validates bsky.social's
+# responses. The service never loads it. Even the latest @atproto/api requires zod 3, and the
+# fix is only in zod 4. Revisit when @atproto supports zod 4.
+CVE-2023-54404 exp:2027-01-31
