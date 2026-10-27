@@ -27,7 +27,7 @@ Most recent work has moved from Gemini to Claude Opus 5.5, pairing with Github C
 ## 🛠️ Tech Stack
 
 * **Language**: TypeScript (ESM, Target: ES2022)
-* **ATProto Integration**: `whabib/labeler`, `@atproto/api`
+* **ATProto Integration**: `whabib/labeler`, `@atproto/lex-client` (with `@atproto/lex-password-session` for publishing the labeler record)
 * **Web Server**: Express, `ws` (WebSockets)
 * **Database Client**: `pg` (PostgreSQL connection pool)
 * **Runtime / Compiler**: `tsx` (TypeScript Execute), `typescript`

@@ -1,4 +1,5 @@
-import { BskyAgent } from '@atproto/api';
+import { Client } from '@atproto/lex-client';
+import { PasswordSession } from '@atproto/lex-password-session';
 import { fileURLToPath } from 'url';
 import { getDistinctCategories, getActiveAuthors, slugify } from './database.js';
 import { DID, BSKY_IDENTIFIER, BSKY_PASSWORD, DRY_RUN, validateConfig } from './config.js';
@@ -97,7 +98,7 @@ async function publishDefinitions() {
 
   // 4. Assemble service record structure
   const serviceRecord = {
-    $type: 'app.bsky.labeler.service',
+    $type: 'app.bsky.labeler.service' as const,
     policies: {
       labelValues: labelValues,
       labelValueDefinitions: definitions,
@@ -117,23 +118,13 @@ async function publishDefinitions() {
     process.exit(0);
   }
 
-  // 5. Connect and Login to Bluesky
-  console.log(`🔐 Logging into Bluesky as ${BSKY_IDENTIFIER}...`);
-  const agent = new BskyAgent({ service: 'https://bsky.social' });
-
+  // 5. Log in to Bluesky and publish the service record
   try {
-    await agent.login({
+    await publishServiceRecord(serviceRecord, {
+      service: 'https://bsky.social',
       identifier: BSKY_IDENTIFIER,
       password: BSKY_PASSWORD,
-    });
-    console.log('🔑 Login successful! Submitting service record...');
-
-    // 6. Publish/Put service record
-    await agent.api.com.atproto.repo.putRecord({
       repo: DID,
-      collection: 'app.bsky.labeler.service',
-      rkey: 'self',
-      record: serviceRecord,
     });
 
     console.log('🎉 SUCCESS! Your labeler service record has been published/updated on the ATProto network!');
@@ -142,6 +133,33 @@ async function publishDefinitions() {
   } catch (error) {
     console.error('❌ Failed to publish service record to Bluesky:', error);
     process.exit(1);
+  }
+}
+
+/**
+ * Logs in with an app password and writes the labeler's service record (app.bsky.labeler.service,
+ * key "self") to its repository, then logs out.
+ */
+export async function publishServiceRecord(
+  record: { $type: 'app.bsky.labeler.service'; [key: string]: unknown },
+  options: { service: string; identifier: string; password: string; repo: string; fetch?: typeof globalThis.fetch },
+): Promise<void> {
+  console.log(`🔐 Logging into Bluesky as ${options.identifier}...`);
+  const session = await PasswordSession.login({
+    service: options.service,
+    identifier: options.identifier,
+    password: options.password,
+    fetch: options.fetch,
+  });
+  try {
+    console.log('🔑 Login successful! Submitting service record...');
+    const client = new Client(session);
+    await client.putRecord(record as Parameters<Client['putRecord']>[0], 'self', {
+      repo: options.repo as `did:${string}:${string}`,
+    });
+  } finally {
+    // Don't leave a session behind on every run; a failed logout doesn't fail the publish
+    await session.logout().catch((err: unknown) => console.warn('⚠️ Logging out of Bluesky failed:', err));
   }
 }
 
