@@ -92,9 +92,10 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (1, 1), (1, 2), (2, 1);
       INSERT INTO "Author" (id, name) VALUES (3, 'Nobody Shared');
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (5, 1), (6, 3);
-      -- Who gets a label: 2+ opinion articles (Zoe: 2 and 5; Unshared Columnist: 7 and 8), or
-      -- 2+ US politics articles (Adam: 1 and 9, in mixed case). Staff Reporter has shares
-      -- (article 3) but no label; Nobody Shared has neither.
+      -- Who gets a label: 5+ opinion articles (Zoe: 2, 5 and 10-12; Unshared Columnist: 7, 8
+      -- and 16-18), or 5+ US politics articles (Adam: 1, 9 and 13-15, in mixed case). Staff
+      -- Reporter has shares (article 3) but no label; Nobody Shared has neither; Former
+      -- Columnist has 2 opinion articles, enough before the rule was raised to 5, not now.
       UPDATE "Article" SET subsection = 'politics' WHERE id = 1;
       UPDATE "Article" SET section = 'opinion' WHERE id = 5;
       INSERT INTO "Article" (id, url, section, subsection, title, date_created) VALUES
@@ -103,6 +104,21 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
         (9, 'https://www.nytimes.com/nine.html', 'US', 'Politics', 'Nine', '2026-09-17 12:00:00');
       INSERT INTO "Author" (id, name) VALUES (4, 'Unshared Columnist'), (5, 'Staff Reporter');
       INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (7, 4), (8, 4), (9, 2), (3, 5);
+      -- Older, never-shared articles that take each label author to 5
+      INSERT INTO "Article" (id, url, section, subsection, title, date_created) VALUES
+        (10, 'https://www.nytimes.com/ten.html', 'opinion', NULL, 'Ten', '2026-08-10 12:00:00'),
+        (11, 'https://www.nytimes.com/eleven.html', 'opinion', NULL, 'Eleven', '2026-08-11 12:00:00'),
+        (12, 'https://www.nytimes.com/twelve.html', 'opinion', NULL, 'Twelve', '2026-08-12 12:00:00'),
+        (13, 'https://www.nytimes.com/thirteen.html', 'us', 'politics', 'Thirteen', '2026-08-13 12:00:00'),
+        (14, 'https://www.nytimes.com/fourteen.html', 'us', 'politics', 'Fourteen', '2026-08-14 12:00:00'),
+        (15, 'https://www.nytimes.com/fifteen.html', 'us', 'politics', 'Fifteen', '2026-08-15 12:00:00'),
+        (16, 'https://www.nytimes.com/sixteen.html', 'opinion', NULL, 'Sixteen', '2026-08-16 12:00:00'),
+        (17, 'https://www.nytimes.com/seventeen.html', 'opinion', NULL, 'Seventeen', '2026-08-17 12:00:00'),
+        (18, 'https://www.nytimes.com/eighteen.html', 'opinion', NULL, 'Eighteen', '2026-08-18 12:00:00');
+      INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES
+        (10, 1), (11, 1), (12, 1), (13, 2), (14, 2), (15, 2), (16, 4), (17, 4), (18, 4);
+      INSERT INTO "Author" (id, name) VALUES (6, 'Former Columnist');
+      INSERT INTO "_ArticleToAuthor" ("A", "B") VALUES (7, 6), (8, 6);
     `);
     // Shares at different ages: article 1 is recent, article 2 older, article 3 only last week
     const shares: [number, string][] = [
@@ -181,12 +197,12 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
     const report = await fetchAuthorsReport('all');
     assert.strictEqual(report.scope, 'all');
     assert.deepStrictEqual(report.authors, [
-      { id: 1, name: 'Zoe Writer', articles: 3, shares: 7 }, // Articles 1, 2 and the unshared 5
-      { id: 2, name: 'Adam Author', articles: 2, shares: 4 }, // Articles 1 and the unshared 9
-      { id: 4, name: 'Unshared Columnist', articles: 2, shares: 0 },
+      { id: 1, name: 'Zoe Writer', articles: 6, shares: 7 }, // Articles 1, 2 and the unshared 5, 10-12
+      { id: 2, name: 'Adam Author', articles: 5, shares: 4 }, // Articles 1 and the unshared 9, 13-15
+      { id: 4, name: 'Unshared Columnist', articles: 5, shares: 0 },
     ]);
-    // Authors without a label are never listed, shared or not
-    assert.ok(!report.authors.some((author) => ['Staff Reporter', 'Nobody Shared'].includes(author.name)));
+    // Authors without a label are never listed, shared or not, nor those under 5 articles
+    assert.ok(!report.authors.some((author) => ['Staff Reporter', 'Nobody Shared', 'Former Columnist'].includes(author.name)));
     // The default is unchanged
     assert.deepStrictEqual((await fetchAuthorsReport()).authors.map((a) => a.name), ['Zoe Writer', 'Adam Author']);
   });
@@ -197,6 +213,9 @@ describe('Popular articles report (Postgres)', { skip: !testDatabaseUrl && 'TEST
       ['One', 4, '2026-09-26T03:30:00.000Z'],
       ['Two', 3, '2026-09-27T14:05:00.000Z'],
       ['Five', 0, '2026-09-20T12:00:00.000Z'],
+      ['Twelve', 0, '2026-08-12T12:00:00.000Z'],
+      ['Eleven', 0, '2026-08-11T12:00:00.000Z'],
+      ['Ten', 0, '2026-08-10T12:00:00.000Z'],
     ]);
     const nobody = await fetchAuthorReport(3, 'all');
     assert.deepStrictEqual(nobody!.articles.map((a) => [a.title, a.shares]), [['Six', 0]]);

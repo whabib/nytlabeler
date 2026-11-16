@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 
 process.env.DATABASE_URL = 'postgresql://nobody@127.0.0.1:1/none';
-const { publishServiceRecord } = await import('../src/publish-definitions.js');
+const { publishServiceRecord, buildServiceRecord } = await import('../src/publish-definitions.js');
 
 const originalConsole = { log: console.log, warn: console.warn, error: console.error };
 before(() => {
@@ -106,5 +106,22 @@ describe('publishServiceRecord', () => {
       '/xrpc/com.atproto.repo.putRecord',
       '/xrpc/com.atproto.server.deleteSession',
     ]);
+  });
+});
+
+describe('buildServiceRecord', () => {
+  test('defines every section, subsection and author once, including authors labeled earlier', () => {
+    const record = buildServiceRecord(
+      ['us', 'opinion'],
+      ['Politics', 'politics'],
+      // Active authors first, then those kept from the earlier, lower threshold
+      [{ name: 'Jamelle Bouie' }, { name: 'Jane Doe' }, { name: 'Jamelle Bouie' }],
+    );
+    const { labelValues, labelValueDefinitions } = record.policies;
+    assert.deepStrictEqual(labelValues, ['us', 'opinion', 'politics', 'jamelle-bouie', 'jane-doe']);
+    assert.strictEqual(labelValueDefinitions.length, labelValues.length);
+    const janeDoe = labelValueDefinitions.find((d: any) => d.identifier === 'jane-doe');
+    assert.strictEqual(janeDoe.locales[0].name, 'Jane Doe', 'A label kept from earlier still shows the author\'s name');
+    assert.strictEqual(record.$type, 'app.bsky.labeler.service');
   });
 });

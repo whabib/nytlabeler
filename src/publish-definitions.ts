@@ -1,26 +1,20 @@
 import { Client } from '@atproto/lex-client';
 import { PasswordSession } from '@atproto/lex-password-session';
 import { fileURLToPath } from 'url';
-import { getDistinctCategories, getActiveAuthors, slugify } from './database.js';
+import { getDistinctCategories, getActiveAuthors, getPreviouslyLabeledAuthors, slugify, AUTHOR_LABEL_MIN_ARTICLES } from './database.js';
 import { DID, BSKY_IDENTIFIER, BSKY_PASSWORD, DRY_RUN, validateConfig } from './config.js';
 import { formatDisplayName } from './utils.js';
 
-async function publishDefinitions() {
-  console.log('📰 Generating and publishing label definitions for NY Times Bluesky Labeler...');
-
-  validateConfig();
-
-  // 1. Fetch distinct sections and subsections
-  console.log('🔍 Fetching sections and subsections from postgres...');
-  const { sections, subsections } = await getDistinctCategories();
-  console.log(`✅ Loaded ${sections.length} sections and ${subsections.length} subsections.`);
-
-  // 2. Fetch opinion authors matching our strict criteria
-  console.log('🔍 Fetching opinion authors with > 1 total articles...');
-  const authors = await getActiveAuthors();
-  console.log(`✅ Loaded ${authors.length} matching authors:`, authors.map(a => a.name));
-
-  // 3. Assemble definitions array
+/**
+ * Builds the labeler's service record: one label definition per section, subsection and
+ * author, with each value listed once.
+ */
+export function buildServiceRecord(
+  sections: string[],
+  subsections: string[],
+  authors: { name: string }[],
+) {
+  // Assemble definitions array
   const definitions: any[] = [];
   const registeredValues = new Set<string>();
 
@@ -96,8 +90,8 @@ async function publishDefinitions() {
 
   console.log(`🏷️ Compiled ${definitions.length} total label definitions.`);
 
-  // 4. Assemble service record structure
-  const serviceRecord = {
+  // Assemble service record structure
+  return {
     $type: 'app.bsky.labeler.service' as const,
     policies: {
       labelValues: labelValues,
@@ -107,6 +101,28 @@ async function publishDefinitions() {
     subjectCollections: ['app.bsky.feed.post'],
     createdAt: new Date().toISOString(),
   };
+}
+
+async function publishDefinitions() {
+  console.log('📰 Generating and publishing label definitions for NY Times Bluesky Labeler...');
+
+  validateConfig();
+
+  // 1. Fetch distinct sections and subsections
+  console.log('🔍 Fetching sections and subsections from postgres...');
+  const { sections, subsections } = await getDistinctCategories();
+  console.log(`✅ Loaded ${sections.length} sections and ${subsections.length} subsections.`);
+
+  // 2. Fetch the authors who get labels, plus those labeled under the earlier, lower threshold
+  console.log(`🔍 Fetching authors with at least ${AUTHOR_LABEL_MIN_ARTICLES} opinion or U.S. politics articles...`);
+  const activeAuthors = await getActiveAuthors();
+  console.log(`✅ Loaded ${activeAuthors.length} matching authors:`, activeAuthors.map(a => a.name));
+  const earlierAuthors = await getPreviouslyLabeledAuthors();
+  console.log(`✅ Keeping definitions for ${earlierAuthors.length} authors labeled before the threshold was raised.`);
+  const authors = [...activeAuthors, ...earlierAuthors];
+
+  // 3. Build the service record
+  const serviceRecord = buildServiceRecord(sections, subsections, authors);
 
   if (DRY_RUN || !BSKY_IDENTIFIER || !BSKY_PASSWORD || !DID) {
     console.log('\n--- [DRY RUN] Compiled app.bsky.labeler.service Record ---');

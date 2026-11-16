@@ -1,6 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert';
-import { normalizeNytUrl, slugify, saveSetting, loadSetting, loadOrCreateSetting, getDistinctCategories, getActiveAuthors, pool } from '../src/database.js';
+import { normalizeNytUrl, slugify, saveSetting, loadSetting, loadOrCreateSetting, getDistinctCategories, getActiveAuthors, getPreviouslyLabeledAuthors, LABEL_AUTHOR_IDS_SQL, AUTHOR_LABEL_MIN_ARTICLES, pool } from '../src/database.js';
 
 import { formatDisplayName } from '../src/utils.js';
 
@@ -142,6 +142,39 @@ describe('Database Helpers', () => {
         throw new Error('ECONNREFUSED');
       });
       await assert.rejects(loadOrCreateSetting('admin_session_secret', () => 'x'));
+    });
+
+    test('should require 5 opinion or U.S. politics articles for an author label', () => {
+      assert.strictEqual(AUTHOR_LABEL_MIN_ARTICLES, 5);
+      assert.strictEqual((LABEL_AUTHOR_IDS_SQL.match(/>= 5/g) ?? []).length, 2);
+      assert.doesNotMatch(LABEL_AUTHOR_IDS_SQL, />= 2/);
+    });
+
+    test('should find authors already labeled who no longer meet the rule', async (t) => {
+      const queries: string[] = [];
+      t.mock.method(pool, 'query', async (sql: string) => {
+        queries.push(sql);
+        if (sql.includes('SELECT DISTINCT val')) return { rows: [{ val: 'jane-doe' }, { val: 'us' }, { val: 'ann-e-marimow' }] };
+        if (sql.includes('FROM "Author"')) {
+          return { rows: [{ id: '7', name: 'Jane Doe' }, { id: 8, name: 'Ann E. Marimow' }, { id: 9, name: 'Never Labeled' }] };
+        }
+        return { rows: [] };
+      });
+      assert.deepStrictEqual(await getPreviouslyLabeledAuthors(), [
+        { id: 7, name: 'Jane Doe' },
+        { id: 8, name: 'Ann E. Marimow' },
+      ]);
+      assert.match(queries[0], /FROM labeler\.labels_\w+ WHERE NOT neg/);
+      assert.match(queries[1], /NOT IN/, 'Authors who meet the rule are already in the active list');
+    });
+
+    test('should find no previously labeled authors when the label table is empty or missing', async (t) => {
+      t.mock.method(pool, 'query', async () => ({ rows: [] }));
+      assert.deepStrictEqual(await getPreviouslyLabeledAuthors(), []);
+      t.mock.method(pool, 'query', async () => {
+        throw new Error('relation "labeler.labels_development" does not exist');
+      });
+      assert.deepStrictEqual(await getPreviouslyLabeledAuthors(), []);
     });
 
     test('should fall back to default value if setting is not found', async (t) => {
