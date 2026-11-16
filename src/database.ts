@@ -92,21 +92,32 @@ export async function lookupArticle(url: string): Promise<ArticleMatch | null> {
 }
 
 /**
- * Ids of the authors who get their own label: at least 2 opinion articles, or at least 2
- * US politics articles. Shared by the labeler and the reports so they can't drift apart.
+ * How many opinion articles, or US politics articles, an author needs for their own label.
+ * Raised from 2 to 5 on 2026-11-16; authors labeled before then keep their label definitions
+ * (see getPreviouslyLabeledAuthors).
+ */
+export const AUTHOR_LABEL_MIN_ARTICLES = 5;
+
+/**
+ * Ids of the authors who get their own label: at least AUTHOR_LABEL_MIN_ARTICLES opinion
+ * articles, or that many US politics articles. Shared by the labeler and the reports so they
+ * can't drift apart.
  */
 export const LABEL_AUTHOR_IDS_SQL = `
       SELECT j2."B"
       FROM "_ArticleToAuthor" j2
       JOIN "Article" a2 ON j2."A" = a2.id
       GROUP BY j2."B"
-      HAVING SUM(CASE WHEN a2.section = 'opinion' THEN 1 ELSE 0 END) >= 2
-          OR SUM(CASE WHEN LOWER(a2.section) = 'us' AND LOWER(a2.subsection) = 'politics' THEN 1 ELSE 0 END) >= 2`;
+      HAVING SUM(CASE WHEN a2.section = 'opinion' THEN 1 ELSE 0 END) >= ${AUTHOR_LABEL_MIN_ARTICLES}
+          OR SUM(CASE WHEN LOWER(a2.section) = 'us' AND LOWER(a2.subsection) = 'politics' THEN 1 ELSE 0 END) >= ${AUTHOR_LABEL_MIN_ARTICLES}`;
+
+/** Postgres table the LabelerServer stores labels in, one per environment. */
+export const LABELS_TABLE = `labeler.labels_${ENV.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
 
 /**
- * Gets the restricted list of published authors:
- * Authors who have written >= 2 articles in the 'opinion' section,
- * OR >= 2 articles in the 'us' section and 'politics' subsection (case-insensitive).
+ * Gets the authors who get new labels: at least AUTHOR_LABEL_MIN_ARTICLES articles in the
+ * 'opinion' section, or that many in the 'us' section and 'politics' subsection
+ * (case-insensitive).
  */
 export async function getActiveAuthors(): Promise<{ id: number; name: string; total_articles: number }[]> {
   const sql = `
@@ -131,6 +142,38 @@ export async function getActiveAuthors(): Promise<{ id: number; name: string; to
     return [];
   }
 }
+
+/**
+ * Authors whose label is already on posts but who no longer meet the rule (for example since
+ * it was raised to 5 articles). The labeler doesn't give them new labels, but the published
+ * label definitions keep them, so the labels already on posts still show the author's name.
+ * Matches each author's slug against the label values in the label table.
+ */
+export async function getPreviouslyLabeledAuthors(): Promise<{ id: number; name: string }[]> {
+  let used;
+  try {
+    used = await pool.query(`SELECT DISTINCT val FROM ${LABELS_TABLE} WHERE NOT neg`);
+  } catch (error) {
+    // Only a missing label table (a new environment) means nobody was labeled. Any other error
+    // propagates: treating it as "none" would publish definitions without these authors.
+    if ((error as { code?: string } | null)?.code === UNDEFINED_TABLE) return [];
+    throw error;
+  }
+  const values = new Set<string>(used.rows.map((row: { val: string }) => row.val));
+  if (values.size === 0) return [];
+  const res = await pool.query(`
+    SELECT auth.id, auth.name
+    FROM "Author" auth
+    WHERE auth.id NOT IN (${LABEL_AUTHOR_IDS_SQL})
+    ORDER BY auth.name ASC;
+  `);
+  return res.rows
+    .map((row: { id: string | number; name: string }) => ({ id: Number(row.id), name: row.name }))
+    .filter((author: { name: string }) => values.has(slugify(author.name)));
+}
+
+/** Postgres error code for a table that doesn't exist. */
+const UNDEFINED_TABLE = '42P01';
 
 
 /**

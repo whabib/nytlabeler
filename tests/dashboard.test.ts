@@ -307,7 +307,7 @@ describe('Label Universe page', () => {
     // The rule from LABEL_AUTHOR_IDS_SQL
     assert.strictEqual(
       heading.closest('.card-header')!.querySelector('p')!.textContent,
-      'Authors with at least 2 opinion articles, or at least 2 articles in U.S. Politics.',
+      'Authors with at least 5 opinion articles, or at least 5 articles in U.S. Politics.',
     );
     window.close();
   });

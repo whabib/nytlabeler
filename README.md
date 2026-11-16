@@ -121,6 +121,13 @@ DATABASE_URL=postgresql://nytdata@localhost:5432/nytdata
 # Dry Run Mode (Highly recommended for development)
 # Set to 'true' to parse, query, and monitor logs, but do NOT push labels or definitions to Bluesky.
 DRY_RUN=true
+
+# Optional: the Jetstream firehose (default wss://jetstream1.us-east.bsky.network/subscribe).
+# After 3 connections in a row that receive nothing, the labeler switches to the next of
+# FIREHOSE_FALLBACK_URLS (comma-separated), keeping its resume position. For Bluesky's public
+# Jetstreams the other public instances are the default; for any other firehose there are none.
+# FIREHOSE_URL=wss://jetstream1.us-east.bsky.network/subscribe
+# FIREHOSE_FALLBACK_URLS=wss://jetstream2.us-east.bsky.network/subscribe
 ```
 
 ### 3. Build & Run
@@ -150,7 +157,9 @@ npm run test
 
 Before your labeler can assign labels that clients (like the Bluesky app or Ozone) recognize, you must compile and publish the service's taxonomy record.
 
-The publisher script queries your PostgreSQL database for all distinct sections/subsections and active opinion authors, registers proper descriptive names inside the locales array, and uploads the policy schema to ATProto:
+The publisher script queries your PostgreSQL database for all distinct sections/subsections and the authors who get labels, registers proper descriptive names inside the locales array, and uploads the policy schema to ATProto.
+
+Authors get labels with at least 5 opinion articles, or at least 5 U.S. Politics articles (`AUTHOR_LABEL_MIN_ARTICLES` in `src/database.ts`; it was 2 before 2026-11-16). Authors labeled under the earlier threshold keep their definitions, so the labels already on posts still show their names, but they don't get new labels.
 
 ```bash
 # Test and view compiled taxonomy record (Dry Run mode)
@@ -299,6 +308,9 @@ gh variable set GCP_DEPLOY_SERVICE_ACCOUNT --env dev --body "github-deployer@poi
 gh variable set BSKY_DID --env dev --body "did:plc:diitczh77g62vvea5fjbbz6b"
 gh variable set BSKY_IDENTIFIER --env dev --body "nyt-labeler-dev.bsky.social"
 gh variable set FIREHOSE_URL --env dev --body "wss://jetstream1.us-east.bsky.network/subscribe"
+# Optional: Jetstream endpoints to fail over to, comma-separated (by default, Bluesky's other
+# public instances). deploy.sh passes it to Cloud Run with the commas intact.
+# gh variable set FIREHOSE_FALLBACK_URLS --env dev --body "wss://jetstream2.us-east.bsky.network/subscribe"
 gh variable set WANTED_COLLECTION --env dev --body "app.bsky.feed.post"
 
 # Only admins (actor 5 is the Admin repository role) may create, move or delete release tags

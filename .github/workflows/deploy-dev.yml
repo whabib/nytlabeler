@@ -103,6 +103,7 @@ jobs:
           BSKY_IDENTIFIER: ${{ vars.BSKY_IDENTIFIER }}
           FIREHOSE_URL: ${{ vars.FIREHOSE_URL }}
           WANTED_COLLECTION: ${{ vars.WANTED_COLLECTION }}
+          FIREHOSE_FALLBACK_URLS: ${{ vars.FIREHOSE_FALLBACK_URLS }}
           DHI_USERNAME: ${{ vars.DHI_USERNAME }}
         run: |
           {
@@ -111,6 +112,8 @@ jobs:
             echo "DHI_USERNAME=${DHI_USERNAME}"
             if [ -n "$FIREHOSE_URL" ]; then echo "FIREHOSE_URL=${FIREHOSE_URL}"; fi
             if [ -n "$WANTED_COLLECTION" ]; then echo "WANTED_COLLECTION=${WANTED_COLLECTION}"; fi
+            # Comma-separated; GitHub variables can't be empty, so this only ever adds fallbacks
+            if [ -n "$FIREHOSE_FALLBACK_URLS" ]; then echo "FIREHOSE_FALLBACK_URLS=${FIREHOSE_FALLBACK_URLS}"; fi
           } > .env
 
       - name: Deploy

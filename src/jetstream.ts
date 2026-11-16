@@ -1,6 +1,6 @@
 import pg from 'pg';
 import WebSocket from 'ws';
-import { DATABASE_URL, ENV, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
+import { DATABASE_URL, ENV, FIREHOSE_FALLBACK_URLS, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
 import { loadSetting, lookupArticle, normalizeNytUrl, type ArticleMatch } from './database.js';
 import { LeaderElection, type LeaderClient } from './firehose-leader.js';
 import { issueLabelsForPost, stats } from './labeler.js';
@@ -10,6 +10,18 @@ export let socket: WebSocket | null = null;
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 let watchdogTimeout: NodeJS.Timeout | null = null;
+let watchdogMs = 15_000;
+
+// The firehose endpoints, in order of preference. When one keeps accepting connections but
+// sending nothing, the next one is tried, keeping the resume position (Jetstream instances
+// share cursors): on 2026-11-13, jetstream1.us-east sent nothing to resumed connections for
+// an hour, while a live connection worked.
+const FIREHOSE_ENDPOINTS = [...new Set([FIREHOSE_URL, ...FIREHOSE_FALLBACK_URLS])];
+let endpointIndex = 0;
+/** Connections in a row that ended without receiving anything. */
+let emptyConnections = 0;
+/** After this many empty connections in a row, switch to the next endpoint. */
+export const MAX_EMPTY_CONNECTIONS = 3;
 let reconnectTimer: NodeJS.Timeout | null = null;
 
 // Incremented whenever this instance gains or loses firehose leadership. Posts received
@@ -135,11 +147,22 @@ function resetWatchdog() {
     clearTimeout(watchdogTimeout);
   }
   watchdogTimeout = setTimeout(() => {
-    console.warn('⚠️ [WATCHDOG] No stream activity received for 15 seconds. Terminating stale connection...');
+    console.warn(`⚠️ [WATCHDOG] No stream activity received for ${watchdogMs / 1000} seconds. Terminating stale connection...`);
     if (socket) {
       socket.terminate(); // Force close the socket immediately
     }
-  }, 15000);
+  }, watchdogMs);
+}
+
+/** Overrides the inactivity watchdog's timeout. Useful for unit testing. */
+export function configureFirehoseWatchdog(timeoutMs: number) {
+  watchdogMs = timeoutMs;
+}
+
+/** Goes back to the first firehose endpoint. Useful for unit testing. */
+export function resetFirehoseEndpoint() {
+  endpointIndex = 0;
+  emptyConnections = 0;
 }
 
 // Only one instance runs the firehose at a time. While an old and a new deployment
@@ -262,7 +285,7 @@ function connect() {
   }
   const generation = leaderGeneration;
 
-  const url = new URL(FIREHOSE_URL);
+  const url = new URL(FIREHOSE_ENDPOINTS[endpointIndex]);
   if (!url.searchParams.has('wantedCollections')) {
     url.searchParams.set('wantedCollections', WANTED_COLLECTION);
   }
@@ -284,6 +307,8 @@ function connect() {
   stats.activeEndpoint = finalUrl;
 
   socket = new WebSocket(finalUrl);
+  // Whether this connection delivered anything (events or keepalives) before it ended
+  let receivedAnything = false;
 
   socket.on('open', () => {
     console.log('✅ Connected to Jetstream firehose!');
@@ -294,6 +319,7 @@ function connect() {
 
   socket.on('message', async (data) => {
     resetWatchdog(); // Reset inactivity timer on any stream activity
+    receivedAnything = true;
 
     let dataObj;
     try {
@@ -382,6 +408,7 @@ function connect() {
   socket.on('close', (code, reason) => {
     const reasonStr = reason ? reason.toString() : 'None';
     console.log(`🔌 Jetstream connection closed (Code: ${code}, Reason: ${reasonStr}).`);
+    noteConnectionEnded(receivedAnything);
     handleDisconnect();
   });
 
@@ -393,6 +420,26 @@ function connect() {
       socket.terminate();
     }
   });
+}
+
+/**
+ * Counts connections that ended without delivering anything, and after MAX_EMPTY_CONNECTIONS
+ * in a row switches to the next firehose endpoint for the reconnect (keeping the resume
+ * position, which every Jetstream instance accepts).
+ */
+function noteConnectionEnded(receivedAnything: boolean) {
+  if (receivedAnything) {
+    emptyConnections = 0;
+    return;
+  }
+  emptyConnections++;
+  if (emptyConnections < MAX_EMPTY_CONNECTIONS || FIREHOSE_ENDPOINTS.length < 2) return;
+  const from = FIREHOSE_ENDPOINTS[endpointIndex];
+  endpointIndex = (endpointIndex + 1) % FIREHOSE_ENDPOINTS.length;
+  emptyConnections = 0;
+  console.warn(
+    `🔀 [FIREHOSE] ${MAX_EMPTY_CONNECTIONS} connections in a row to ${from} received nothing; switching to ${FIREHOSE_ENDPOINTS[endpointIndex]}.`,
+  );
 }
 
 /**

@@ -40,6 +40,19 @@ export const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nytdata@lo
 
 // Jetstream Config
 export const FIREHOSE_URL = process.env.FIREHOSE_URL || 'wss://jetstream1.us-east.bsky.network/subscribe';
+
+/** Bluesky's public Jetstream instances; they serve the same events, with the same cursors. */
+const PUBLIC_JETSTREAMS = ['jetstream1.us-east', 'jetstream2.us-east', 'jetstream1.us-west', 'jetstream2.us-west']
+  .map((host) => `wss://${host}.bsky.network/subscribe`);
+
+/**
+ * Other Jetstream endpoints to switch to when FIREHOSE_URL keeps connecting but sending
+ * nothing (comma-separated in FIREHOSE_FALLBACK_URLS). By default, Bluesky's other public
+ * instances when FIREHOSE_URL is one of them; none for any other firehose.
+ */
+export const FIREHOSE_FALLBACK_URLS: string[] = process.env.FIREHOSE_FALLBACK_URLS !== undefined
+  ? process.env.FIREHOSE_FALLBACK_URLS.split(',').map((url) => url.trim()).filter(Boolean)
+  : PUBLIC_JETSTREAMS.includes(FIREHOSE_URL) ? PUBLIC_JETSTREAMS.filter((url) => url !== FIREHOSE_URL) : [];
 export const WANTED_COLLECTION = process.env.WANTED_COLLECTION || 'app.bsky.feed.post';
 
 // Validation helper

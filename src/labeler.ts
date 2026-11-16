@@ -1,6 +1,6 @@
 import { LabelerServer } from 'labeler';
 import { DID, SIGNING_KEY, DRY_RUN, ENV } from './config.js';
-import { pool, getActiveAuthors, slugify } from './database.js';
+import { pool, getActiveAuthors, slugify, LABELS_TABLE } from './database.js';
 import { preparePostArticlesTable, recordPostArticles, POST_ARTICLES_TABLE } from './post-articles.js';
 
 // Define matching types
@@ -54,8 +54,7 @@ export async function loadActiveAuthors() {
   }
 }
 
-/** Postgres table the LabelerServer stores labels in, one per environment. */
-export const LABELS_TABLE = `labeler.labels_${ENV.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
+export { LABELS_TABLE };
 
 // Standard LabelerServer initialization
 export let labelerServer: LabelerServer | null = null;
