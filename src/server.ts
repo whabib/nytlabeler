@@ -554,6 +554,19 @@ app.get('/{*splat}', (req, res) => {
   res.sendFile(path.resolve(__dirname, '../src/public/index.html'));
 });
 
+// Requests the router or static files reject as malformed (e.g. a path with invalid percent
+// encoding, like /%C0) get a plain 400. Express would otherwise log their stack trace as an
+// error. Anything else still goes to Express's default handler.
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const status = (err as { status?: unknown; statusCode?: unknown } | null)?.status
+    ?? (err as { statusCode?: unknown } | null)?.statusCode;
+  if (typeof status === 'number' && status >= 400 && status < 500 && !res.headersSent) {
+    res.status(status).json({ error: status === 400 ? 'Bad Request' : 'Request rejected' });
+    return;
+  }
+  next(err);
+});
+
 /**
  * Starts the dashboard web server.
  */

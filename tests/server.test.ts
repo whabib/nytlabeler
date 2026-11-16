@@ -295,6 +295,22 @@ describe('WebSocket Protocol Proxy', () => {
     assert.strictEqual(body.version, version);
   }));
 
+  test('should answer a malformed path with a quiet 400', cleanErrors(async () => {
+    const logged: unknown[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+    try {
+      for (const path of ['/%C0', '/reports/%E0%A4%A', '/images/%C0.png']) {
+        const res = await fetch(`http://127.0.0.1:14100${path}`);
+        assert.strictEqual(res.status, 400, path);
+        assert.deepStrictEqual(await res.json(), { error: 'Bad Request' });
+      }
+    } finally {
+      console.error = originalError;
+    }
+    assert.deepStrictEqual(logged, [], 'A malformed request is not logged as an error');
+  }));
+
   test('should serve the NYT attribution logo unaltered', cleanErrors(async () => {
     const res = await fetch('http://127.0.0.1:14100/images/poweredby_nytimes_150a.png');
     assert.strictEqual(res.status, 200);
