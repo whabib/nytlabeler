@@ -187,7 +187,12 @@ const isMain = process.argv[1] && (
 );
 
 if (isMain) {
-  publishDefinitions().then(() => {
-    process.exit(0);
-  });
+  publishDefinitions().then(
+    () => process.exit(0),
+    (error) => {
+      // Publishing nothing beats publishing an incomplete record (e.g. the database failed)
+      console.error('❌ Failed to compile label definitions; nothing was published:', error);
+      process.exit(1);
+    },
+  );
 }

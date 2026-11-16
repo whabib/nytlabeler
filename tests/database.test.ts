@@ -172,9 +172,23 @@ describe('Database Helpers', () => {
       t.mock.method(pool, 'query', async () => ({ rows: [] }));
       assert.deepStrictEqual(await getPreviouslyLabeledAuthors(), []);
       t.mock.method(pool, 'query', async () => {
-        throw new Error('relation "labeler.labels_development" does not exist');
+        throw Object.assign(new Error('relation "labeler.labels_development" does not exist'), { code: '42P01' });
       });
       assert.deepStrictEqual(await getPreviouslyLabeledAuthors(), []);
+    });
+
+    test('should fail, rather than report no earlier authors, when the database fails', async (t) => {
+      t.mock.method(pool, 'query', async () => {
+        throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+      });
+      await assert.rejects(getPreviouslyLabeledAuthors(), /ECONNREFUSED/);
+
+      // The label values load, but looking up the authors fails
+      t.mock.method(pool, 'query', async (sql: string) => {
+        if (sql.includes('SELECT DISTINCT val')) return { rows: [{ val: 'jane-doe' }] };
+        throw Object.assign(new Error('permission denied for table Author'), { code: '42501' });
+      });
+      await assert.rejects(getPreviouslyLabeledAuthors(), /permission denied/);
     });
 
     test('should fall back to default value if setting is not found', async (t) => {

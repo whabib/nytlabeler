@@ -150,25 +150,30 @@ export async function getActiveAuthors(): Promise<{ id: number; name: string; to
  * Matches each author's slug against the label values in the label table.
  */
 export async function getPreviouslyLabeledAuthors(): Promise<{ id: number; name: string }[]> {
+  let used;
   try {
-    const used = await pool.query(`SELECT DISTINCT val FROM ${LABELS_TABLE} WHERE NOT neg`);
-    const values = new Set<string>(used.rows.map((row: { val: string }) => row.val));
-    if (values.size === 0) return [];
-    const res = await pool.query(`
-      SELECT auth.id, auth.name
-      FROM "Author" auth
-      WHERE auth.id NOT IN (${LABEL_AUTHOR_IDS_SQL})
-      ORDER BY auth.name ASC;
-    `);
-    return res.rows
-      .map((row: { id: string | number; name: string }) => ({ id: Number(row.id), name: row.name }))
-      .filter((author: { name: string }) => values.has(slugify(author.name)));
+    used = await pool.query(`SELECT DISTINCT val FROM ${LABELS_TABLE} WHERE NOT neg`);
   } catch (error) {
-    // No label table yet (a new environment), or the database is unreachable
-    console.error('Database error fetching previously labeled authors:', error);
-    return [];
+    // Only a missing label table (a new environment) means nobody was labeled. Any other error
+    // propagates: treating it as "none" would publish definitions without these authors.
+    if ((error as { code?: string } | null)?.code === UNDEFINED_TABLE) return [];
+    throw error;
   }
+  const values = new Set<string>(used.rows.map((row: { val: string }) => row.val));
+  if (values.size === 0) return [];
+  const res = await pool.query(`
+    SELECT auth.id, auth.name
+    FROM "Author" auth
+    WHERE auth.id NOT IN (${LABEL_AUTHOR_IDS_SQL})
+    ORDER BY auth.name ASC;
+  `);
+  return res.rows
+    .map((row: { id: string | number; name: string }) => ({ id: Number(row.id), name: row.name }))
+    .filter((author: { name: string }) => values.has(slugify(author.name)));
 }
+
+/** Postgres error code for a table that doesn't exist. */
+const UNDEFINED_TABLE = '42P01';
 
 
 /**
