@@ -121,20 +121,27 @@ fi
 # Build list of environment variables for Cloud Run
 CLOUDSQL_INSTANCE_CONNECTION="${PROJECT_ID}:${REGION}:${CLOUDSQL_INSTANCE}"
 
-ENV_VARS="ENV=${APP_ENV}"
-ENV_VARS="${ENV_VARS},DRY_RUN=false"
+ENV_LIST=("ENV=${APP_ENV}" "DRY_RUN=false")
 
 # ATProto identifiers passed from local .env (signing key + password are injected via Secret Manager)
-ENV_VARS="${ENV_VARS},BSKY_DID=${BSKY_DID:-}"
-ENV_VARS="${ENV_VARS},BSKY_IDENTIFIER=${BSKY_IDENTIFIER:-}"
+ENV_LIST+=("BSKY_DID=${BSKY_DID:-}" "BSKY_IDENTIFIER=${BSKY_IDENTIFIER:-}")
 
 # Add optional firehose parameters
 if [ -n "${FIREHOSE_URL:-}" ]; then
-  ENV_VARS="${ENV_VARS},FIREHOSE_URL=${FIREHOSE_URL}"
+  ENV_LIST+=("FIREHOSE_URL=${FIREHOSE_URL}")
 fi
 if [ -n "${WANTED_COLLECTION:-}" ]; then
-  ENV_VARS="${ENV_VARS},WANTED_COLLECTION=${WANTED_COLLECTION}"
+  ENV_LIST+=("WANTED_COLLECTION=${WANTED_COLLECTION}")
 fi
+# Forwarded whenever it's set, even empty: an empty value turns off the default fallbacks
+if [ -n "${FIREHOSE_FALLBACK_URLS+set}" ]; then
+  ENV_LIST+=("FIREHOSE_FALLBACK_URLS=${FIREHOSE_FALLBACK_URLS}")
+fi
+
+# gcloud splits --set-env-vars on commas, which FIREHOSE_FALLBACK_URLS contains, so join
+# with "@@" instead and say so with gcloud's "^@@^" prefix (see `gcloud topic escaping`)
+ENV_VARS="$(printf '%s@@' "${ENV_LIST[@]}")"
+ENV_VARS="^@@^${ENV_VARS%@@}"
 
 # The base images come from Docker Hardened Images (dhi.io), which needs a Docker login.
 # The token is in Secret Manager (DOCKER_DHI_TOKEN); cloudbuild.yaml logs in with it.

@@ -308,6 +308,9 @@ gh variable set GCP_DEPLOY_SERVICE_ACCOUNT --env dev --body "github-deployer@poi
 gh variable set BSKY_DID --env dev --body "did:plc:diitczh77g62vvea5fjbbz6b"
 gh variable set BSKY_IDENTIFIER --env dev --body "nyt-labeler-dev.bsky.social"
 gh variable set FIREHOSE_URL --env dev --body "wss://jetstream1.us-east.bsky.network/subscribe"
+# Optional: Jetstream endpoints to fail over to, comma-separated (by default, Bluesky's other
+# public instances). deploy.sh passes it to Cloud Run with the commas intact.
+# gh variable set FIREHOSE_FALLBACK_URLS --env dev --body "wss://jetstream2.us-east.bsky.network/subscribe"
 gh variable set WANTED_COLLECTION --env dev --body "app.bsky.feed.post"
 
 # Only admins (actor 5 is the Admin repository role) may create, move or delete release tags
