@@ -5,9 +5,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 // Point the firehose at a local mock Jetstream BEFORE importing the module
 process.env.FIREHOSE_URL = 'ws://127.0.0.1:14301/subscribe';
+process.env.FIREHOSE_FALLBACK_URLS = 'ws://127.0.0.1:14302/subscribe';
 
 const {
   startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, resignFirehoseLeadership, HANDOFF_CHANNEL, RESUME_REWIND_US,
+  configureFirehoseWatchdog, resetFirehoseEndpoint, MAX_EMPTY_CONNECTIONS,
 } = await import('../src/jetstream.js');
 const { stats, setLabelerServer } = await import('../src/labeler.js');
 const { pool } = await import('../src/database.js');
@@ -48,6 +50,11 @@ after(() => {
 
 describe('Firehose leadership', () => {
   let jetstream: WebSocketServer;
+  let fallbackJetstream: WebSocketServer;
+  const fallbackUrls: string[] = []; // Connections to the fallback endpoint
+  const fallbackSockets: WebSocket[] = [];
+  // While set, the main fake Jetstream accepts connections but sends nothing on them
+  let stallMain = false;
   const connections: WebSocket[] = [];
   const connectionUrls: string[] = []; // The URL of each connection, cursor included
   const open = () => connections.filter((ws) => ws.readyState === WebSocket.OPEN);
@@ -79,11 +86,21 @@ describe('Firehose leadership', () => {
     jetstream.on('connection', (ws, request) => {
       connections.push(ws);
       connectionUrls.push(request.url ?? '');
+      if (stallMain) return;
       // Keep the watchdog quiet
       const keepAlive = setInterval(() => ws.send(JSON.stringify({ kind: 'identity' })), 1000);
       ws.on('close', () => clearInterval(keepAlive));
     });
     await new Promise<void>((resolve) => jetstream.on('listening', resolve));
+
+    fallbackJetstream = new WebSocketServer({ port: 14302, host: '127.0.0.1' });
+    fallbackJetstream.on('connection', (ws, request) => {
+      fallbackSockets.push(ws);
+      fallbackUrls.push(request.url ?? '');
+      const keepAlive = setInterval(() => ws.send(JSON.stringify({ kind: 'identity' })), 50);
+      ws.on('close', () => clearInterval(keepAlive));
+    });
+    await new Promise<void>((resolve) => fallbackJetstream.on('listening', resolve));
 
     pool.query = (async (sql: string) => {
       if (sql.includes('"_Settings"')) return { rows: savedSetting === null ? [] : [{ value: savedSetting }] };
@@ -129,15 +146,21 @@ describe('Firehose leadership', () => {
   afterEach(async () => {
     stopFirehoseListener();
     await releaseFirehoseLeadership();
-    for (const ws of connections) ws.terminate();
+    for (const ws of [...connections, ...fallbackSockets]) ws.terminate();
     connections.length = 0;
     connectionUrls.length = 0;
+    fallbackSockets.length = 0;
+    fallbackUrls.length = 0;
+    stallMain = false;
+    configureFirehoseWatchdog(15_000);
+    resetFirehoseEndpoint();
   });
 
   after(async () => {
     pool.query = originalQuery;
     setLabelerServer(null);
     await new Promise<void>((resolve) => jetstream.close(() => resolve()));
+    await new Promise<void>((resolve) => fallbackJetstream.close(() => resolve()));
     await pool.end();
   });
 
@@ -241,6 +264,46 @@ describe('Firehose leadership', () => {
     await waitFor(() => created.length === 3);
     await wait(50);
     assert.deepStrictEqual(created, ['us', 'us', 'us'], 'Replayed posts must not be labeled again');
+  });
+
+  test('switches to the next Jetstream endpoint, keeping the resume position, when one keeps sending nothing', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+    const lastEventUs = Date.now() * 1000;
+    sendNytPost(open()[0], 'failover-before', undefined, lastEventUs);
+    await waitFor(() => created.length === 1);
+
+    // Like jetstream1.us-east on 2026-11-13: connections are accepted, but nothing arrives
+    stallMain = true;
+    configureFirehoseWatchdog(150);
+    connections[0].terminate();
+
+    await waitFor(() => fallbackUrls.length === 1, 10_000);
+    const resumedAt = String(lastEventUs - RESUME_REWIND_US);
+    const mainRetries = connectionUrls.slice(1).map((url) => new URL(url, 'ws://x').searchParams.get('cursor'));
+    assert.strictEqual(mainRetries.length, MAX_EMPTY_CONNECTIONS, 'It gave the main endpoint a few tries first');
+    assert.ok(mainRetries.every((cursor) => cursor === resumedAt));
+    assert.strictEqual(new URL(fallbackUrls[0], 'ws://x').searchParams.get('cursor'), resumedAt, 'It keeps the resume position');
+    assert.match(stats.activeEndpoint, /^ws:\/\/127\.0\.0\.1:14302\//);
+
+    // Posts from the fallback are labeled as usual
+    await waitFor(() => stats.firehoseConnected && fallbackSockets.some((ws) => ws.readyState === WebSocket.OPEN));
+    sendNytPost(fallbackSockets.find((ws) => ws.readyState === WebSocket.OPEN)!, 'failover-after', undefined, lastEventUs + 1_000_000);
+    await waitFor(() => created.length === 2);
+  });
+
+  test('stays on its endpoint when connections deliver something before dropping', async () => {
+    lockFree = true;
+    startFirehoseListener();
+    for (let i = 0; i < MAX_EMPTY_CONNECTIONS + 1; i++) {
+      await waitFor(() => open().length === 1 && stats.firehoseConnected, 4000);
+      await wait(1100); // A keepalive arrives
+      open()[0].terminate();
+      await waitFor(() => !stats.firehoseConnected);
+    }
+    await waitFor(() => open().length === 1, 4000);
+    assert.strictEqual(fallbackUrls.length, 0);
   });
 
   test('starts live after losing and regaining leadership, or turning the firehose off and on', async () => {
