@@ -227,17 +227,35 @@ gcloud run jobs execute nyt-labeler-dev-top-stories --region us-central1
 npm run post-top-stories -- 24h
 ```
 
-Cloud Scheduler runs it every hour, on the hour (created once; `deploy.sh` doesn't manage triggers):
+Cloud Scheduler runs it for each period, in New York time. The triggers are created once; `deploy.sh` doesn't manage them:
+
+| Trigger | Period | Schedule |
+| --- | --- | --- |
+| `nyt-labeler-dev-top-stories-hourly` | `1h` | every hour, on the hour |
+| `nyt-labeler-dev-top-stories-8h` | `8h` | midnight, 8 AM and 4 PM |
+| `nyt-labeler-dev-top-stories-daily` | `24h` | 11 PM |
+| `nyt-labeler-dev-top-stories-weekly` | `7d` | Mondays at 9 AM |
 
 ```bash
-gcloud scheduler jobs create http nyt-labeler-dev-top-stories-hourly \
-  --location us-central1 --schedule "0 * * * *" --time-zone "America/New_York" \
-  --uri "https://run.googleapis.com/v2/projects/pointless-enterprises/locations/us-central1/jobs/nyt-labeler-dev-top-stories:run" \
-  --http-method POST \
-  --oauth-service-account-email 506551886695-compute@developer.gserviceaccount.com
+JOB_URI="https://run.googleapis.com/v2/projects/pointless-enterprises/locations/us-central1/jobs/nyt-labeler-dev-top-stories:run"
+RUNNER=506551886695-compute@developer.gserviceaccount.com
+
+# Name, schedule, period
+while read -r name schedule period; do
+  gcloud scheduler jobs create http "nyt-labeler-dev-top-stories-${name}" \
+    --location us-central1 --schedule "${schedule//_/ }" --time-zone "America/New_York" \
+    --uri "$JOB_URI" --http-method POST --oauth-service-account-email "$RUNNER" \
+    --headers Content-Type=application/json \
+    --message-body "{\"overrides\":{\"containerOverrides\":[{\"args\":[\"dist/top-stories.js\",\"${period}\"]}]}}"
+done <<'TRIGGERS'
+hourly 0_*_*_*_* 1h
+8h 0_0,8,16_*_*_* 8h
+daily 0_23_*_*_* 24h
+weekly 0_9_*_*_1 7d
+TRIGGERS
 ```
 
-For another period, a trigger passes the argument as an override in its body, for example `--message-body '{"overrides":{"containerOverrides":[{"args":["dist/top-stories.js","24h"]}]}}'` with `--headers Content-Type=application/json`.
+Passing the period as an override needs `run.jobs.runWithOverrides`, which the runtime account has through `roles/editor`.
 
 ### 3. Secret Manager & Cloud SQL Connection Settings
 To maximize security, sensitive environment credentials are retrieved dynamically from **Google Secret Manager** during Cloud Run Service and Job startup:
