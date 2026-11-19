@@ -1,5 +1,5 @@
-import { Client } from '@atproto/lex-client';
-import { PasswordSession } from '@atproto/lex-password-session';
+import type { Client } from '@atproto/lex-client';
+import { withBlueskySession } from './bluesky.js';
 import { fileURLToPath } from 'url';
 import { getDistinctCategories, getActiveAuthors, getPreviouslyLabeledAuthors, slugify, AUTHOR_LABEL_MIN_ARTICLES } from './database.js';
 import { DID, BSKY_IDENTIFIER, BSKY_PASSWORD, DRY_RUN, validateConfig } from './config.js';
@@ -160,23 +160,12 @@ export async function publishServiceRecord(
   record: { $type: 'app.bsky.labeler.service'; [key: string]: unknown },
   options: { service: string; identifier: string; password: string; repo: string; fetch?: typeof globalThis.fetch },
 ): Promise<void> {
-  console.log(`🔐 Logging into Bluesky as ${options.identifier}...`);
-  const session = await PasswordSession.login({
-    service: options.service,
-    identifier: options.identifier,
-    password: options.password,
-    fetch: options.fetch,
-  });
-  try {
-    console.log('🔑 Login successful! Submitting service record...');
-    const client = new Client(session);
+  await withBlueskySession(options, async (client) => {
+    console.log('📤 Submitting service record...');
     await client.putRecord(record as Parameters<Client['putRecord']>[0], 'self', {
       repo: options.repo as `did:${string}:${string}`,
     });
-  } finally {
-    // Don't leave a session behind on every run; a failed logout doesn't fail the publish
-    await session.logout().catch((err: unknown) => console.warn('⚠️ Logging out of Bluesky failed:', err));
-  }
+  });
 }
 
 // Execute script only when run directly as a CLI

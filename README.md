@@ -19,6 +19,7 @@ Most recent work has moved from Gemini to Claude Opus 5.5, pairing with Github C
   * Emits raw section and subsection labels cleanly with no prefixes (e.g., `travel`, `review`).
   * Emits author labels *only* for authors of `opinion` section pieces who have written more than one total article in the database (e.g., `ross-douthat`).
 * **ATProto Compliance**: Signs and transmits lower-case kebab-case labels (`val` tokens) while publishing beautiful proper-cased display names (`Ross Douthat`) in the locales registry.
+* **Top Stories Posts**: Every hour, the labeler's account posts the three NYT stories shared in the most labeled posts over the last hour, with their share counts. The same job can post for the last 8 hours, 24 hours or 7 days. The labeler skips its own posts, so these never count as shares.
 * **Glassmorphic Web Dashboard**: Express + WebSocket control panel displaying real-time post throughput, matched database articles, system statistics, and active memory charts.
 * **Cloud-Ready**: Bundled with a production-optimized multi-stage `Dockerfile` and a fully parameterized `deploy.sh` script for Google Cloud Run. The image is built on [Docker Hardened Images](https://dhi.io) (Alpine), with no npm or shell at runtime, and runs as a non-root user. CI fails on any critical or high vulnerability in it.
 
@@ -186,11 +187,13 @@ chmod +x deploy.sh
 # Deploy to Development
 # - Service: nyt-labeler-dev (mapped to nyt-labeler-dev.warren.nyc)
 # - Job:     nyt-labeler-dev-job
+# - Job:     nyt-labeler-dev-top-stories
 ./deploy.sh --env dev --project pointless-enterprises --region us-central1
 
 # Deploy to Production
 # - Service: nyt-labeler (mapped to nyt-labeler.warren.nyc)
 # - Job:     nyt-labeler-job
+# - Job:     nyt-labeler-top-stories
 ./deploy.sh --env prod --project pointless-enterprises --region us-central1
 ```
 
@@ -203,6 +206,38 @@ gcloud run jobs execute nyt-labeler-dev-job --region us-central1
 # Trigger the prod job
 gcloud run jobs execute nyt-labeler-job --region us-central1
 ```
+
+### 2a. Posting the Top Stories
+The `nyt-labeler-dev-top-stories` job posts the most shared stories on the labeler's account (`BSKY_IDENTIFIER`), using its app password (`BSKY_PASSWORD`). For example:
+
+```
+Top 3 Shared NYT Stories Last Hour:
+nytimes.com/2026/11/18/us/politics/senate-vote.html, 12 shares
+nytimes.com/2026/11/18/opinion/trump-tariffs.html, 7 shares
+nytimes.com/2026/11/17/world/europe/ukraine.html, 1 share
+```
+
+Links are shortened as needed to fit Bluesky's 300-character limit, and each still opens the full article. When fewer than three stories were shared it lists those, and when none were it posts nothing. Its one argument is the period, `1h` (the default), `8h`, `24h` or `7d`, the same periods as the Reports page. The job doesn't retry a failed run, which might have posted already.
+
+```bash
+# Run it now, for the default period (the last hour)
+gcloud run jobs execute nyt-labeler-dev-top-stories --region us-central1
+
+# Locally, without posting (DRY_RUN=true prints the post instead)
+npm run post-top-stories -- 24h
+```
+
+Cloud Scheduler runs it every hour, on the hour (created once; `deploy.sh` doesn't manage triggers):
+
+```bash
+gcloud scheduler jobs create http nyt-labeler-dev-top-stories-hourly \
+  --location us-central1 --schedule "0 * * * *" --time-zone "America/New_York" \
+  --uri "https://run.googleapis.com/v2/projects/pointless-enterprises/locations/us-central1/jobs/nyt-labeler-dev-top-stories:run" \
+  --http-method POST \
+  --oauth-service-account-email 506551886695-compute@developer.gserviceaccount.com
+```
+
+For another period, a trigger passes the argument as an override in its body, for example `--message-body '{"overrides":{"containerOverrides":[{"args":["dist/top-stories.js","24h"]}]}}'` with `--headers Content-Type=application/json`.
 
 ### 3. Secret Manager & Cloud SQL Connection Settings
 To maximize security, sensitive environment credentials are retrieved dynamically from **Google Secret Manager** during Cloud Run Service and Job startup:
