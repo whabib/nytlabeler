@@ -223,8 +223,8 @@ Each headline links to its article (a story without a stored headline shows its 
 # Run it now, for the default period (the last hour)
 gcloud run jobs execute nyt-labeler-dev-top-stories --region us-central1
 
-# Locally, without posting (DRY_RUN=true prints the post instead)
-npm run post-top-stories -- 24h
+# Locally, printing the post instead of posting it
+DRY_RUN=true npm run post-top-stories -- 24h
 ```
 
 Cloud Scheduler runs it for each period, in New York time. The triggers are created once; `deploy.sh` doesn't manage them:

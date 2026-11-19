@@ -88,6 +88,25 @@ describe('buildTopStoriesPost', () => {
     assert.match(post.text, /…, 1003 shares$/);
   });
 
+  test('without headlines, shortens only the long links, giving them the room short ones leave', () => {
+    const slug = 'a-very-long-headline-slug-that-goes-on-and-on-about-the-news-of-the-day-and-then-some';
+    const stories = [
+      { url: `https://www.nytimes.com/2026/11/18/us/politics/${slug}-1.html`, shares: 30 },
+      { url: 'https://www.nytimes.com/2026/11/18/us/short.html', shares: 20 },
+      { url: `https://www.nytimes.com/2026/11/18/us/politics/${slug}-3.html`, shares: 10 },
+    ];
+    const post = buildTopStoriesPost(stories)!;
+    const shown = post.facets.map((f) => facetText(post.text, f));
+    assert.strictEqual(shown[1], 'nytimes.com/2026/11/18/us/short.html');
+    assert.ok(shown[0].endsWith('…') && shown[2].endsWith('…'), shown.join(' | '));
+    assert.ok(graphemeCount(post.text) <= POST_MAX_GRAPHEMES);
+    assert.ok(graphemeCount(post.text) >= POST_MAX_GRAPHEMES - 2, `${graphemeCount(post.text)} graphemes`);
+
+    // When everything fits, nothing is shortened
+    const fits = buildTopStoriesPost([stories[1], { url: 'https://www.nytimes.com/2026/11/18/us/politics/a-medium-length-slug-here.html', shares: 5 }])!;
+    assert.ok(!fits.text.includes('…'), fits.text);
+  });
+
   test('lists only the top three, and says how many it lists when there are fewer', () => {
     const story = (n: number) => ({ url: `https://www.nytimes.com/2026/11/18/us/story-${n}.html`, shares: 10 - n });
     assert.strictEqual(buildTopStoriesPost([1, 2, 3, 4].map(story))!.facets.length, 3);
