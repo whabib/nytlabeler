@@ -212,12 +212,12 @@ The `nyt-labeler-dev-top-stories` job posts the most shared stories on the label
 
 ```
 Top 3 Shared NYT Stories Last Hour:
-nytimes.com/2026/11/18/us/politics/senate-vote.html, 12 shares
-nytimes.com/2026/11/18/opinion/trump-tariffs.html, 7 shares
-nytimes.com/2026/11/17/world/europe/ukraine.html, 1 share
+Senate Passes the Spending Bill, 12 shares
+The Tariffs Aren’t Working, 7 shares
+Ukraine’s Winter Offensive, 1 share
 ```
 
-Links are shortened as needed to fit Bluesky's 300-character limit, and each still opens the full article. When fewer than three stories were shared it lists those, and when none were it posts nothing. Its one argument is the period, `1h` (the default), `8h`, `24h` or `7d`, the same periods as the Reports page. The job doesn't retry a failed run, which might have posted already.
+Each headline links to its article (a story without a stored headline shows its shortened URL). Long headlines are cut short with "…" as needed to fit Bluesky's 300-character limit. When fewer than three stories were shared it lists those, and when none were it posts nothing. Its one argument is the period, `1h` (the default), `8h`, `24h` or `7d`, the same periods as the Reports page. The job doesn't retry a failed run, which might have posted already.
 
 ```bash
 # Run it now, for the default period (the last hour)

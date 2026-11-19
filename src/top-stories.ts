@@ -12,6 +12,8 @@ export const POST_MAX_GRAPHEMES = 300;
 
 export interface TopStory {
   url: string;
+  /** The headline, shown as the link's text; without one, the shortened URL is shown. */
+  title?: string | null;
   shares: number;
 }
 
@@ -48,31 +50,58 @@ function sharesText(shares: number): string {
  * kept in the link facet, so the shortened text still opens the story.
  */
 export function displayUrl(url: string, max: number): string {
-  const shown = url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[?#].*$/, '');
-  const chars = graphemes(shown);
-  return chars.length <= max ? shown : `${chars.slice(0, Math.max(max - 1, 0)).join('')}…`;
+  return shorten(url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[?#].*$/, ''), max);
+}
+
+/** Cuts text short with "…" past `max` graphemes. */
+function shorten(text: string, max: number): string {
+  const chars = graphemes(text);
+  return chars.length <= max ? text : `${chars.slice(0, Math.max(max - 1, 0)).join('')}…`;
+}
+
+/** A story's link text: its headline on one line, or the shortened URL when it has none. */
+function linkText(story: TopStory): string {
+  const title = story.title?.replace(/\s+/g, ' ').trim();
+  return title || displayUrl(story.url, Infinity);
 }
 
 /**
- * The post for one period (`period` is its label, like "Last Hour"): a heading, then one line per story with its link and share count. Links
- * are shortened as needed to keep the text within Bluesky's 300-grapheme limit, and each one
- * gets a link facet (byte offsets into the UTF-8 text) pointing at the full URL. Returns null
- * when nothing was shared, since there's nothing to post.
+ * Shares `budget` graphemes among texts of the given lengths: short ones keep their full
+ * length, and the rest is split evenly among the long ones.
+ */
+function allot(lengths: number[], budget: number): number[] {
+  const allotted = new Array<number>(lengths.length);
+  let remaining = budget;
+  const order = lengths.map((length, i) => ({ length, i })).sort((a, b) => a.length - b.length);
+  order.forEach(({ length, i }, n) => {
+    allotted[i] = Math.min(length, Math.floor(remaining / (order.length - n)));
+    remaining -= allotted[i];
+  });
+  return allotted;
+}
+
+/**
+ * The post for one period (`period` is its label, like "Last Hour"): a heading, then one line
+ * per story with its headline and share count. Each headline is a link to the story (a link
+ * facet, by byte offsets into the UTF-8 text); a story without one shows its shortened URL.
+ * Headlines are cut short as needed to keep the text within Bluesky's 300-grapheme limit.
+ * Returns null when nothing was shared, since there's nothing to post.
  */
 export function buildTopStoriesPost(stories: TopStory[], period = 'Last Hour'): TopStoriesPost | null {
   const listed = stories.slice(0, TOP_STORIES_COUNT);
   if (listed.length === 0) return null;
 
   const heading = header(listed.length, period);
-  // Everything but the links: the heading, and each line's line break and share count
+  // Everything but the link texts: the heading, and each line's line break and share count
   const fixed = graphemes(heading).length + listed.reduce((sum, s) => sum + 1 + graphemes(sharesText(s.shares)).length, 0);
-  const perLink = Math.floor((POST_MAX_GRAPHEMES - fixed) / listed.length);
+  const texts = listed.map(linkText);
+  const lengths = allot(texts.map((t) => graphemes(t).length), POST_MAX_GRAPHEMES - fixed);
 
   let text = heading;
   const facets: TopStoriesPost['facets'] = [];
-  for (const story of listed) {
+  for (const [i, story] of listed.entries()) {
     text += '\n';
-    const shown = displayUrl(story.url, perLink);
+    const shown = shorten(texts[i], lengths[i]);
     const byteStart = utf8Length(text);
     text += shown;
     facets.push({

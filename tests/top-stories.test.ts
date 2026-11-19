@@ -22,29 +22,59 @@ function facetText(text: string, facet: { index: { byteStart: number; byteEnd: n
 }
 
 describe('buildTopStoriesPost', () => {
-  test('lists each story on its own line with its share count, each link opening the full URL', () => {
+  test('lists each story on its own line, its headline linking to it, with its share count', () => {
     const stories = [
-      { url: 'https://www.nytimes.com/2026/11/18/us/politics/senate-vote.html', shares: 12 },
-      { url: 'https://www.nytimes.com/2026/11/18/opinion/trump-tariffs.html', shares: 7 },
-      { url: 'https://www.nytimes.com/2026/11/17/world/europe/ukraine.html', shares: 1 },
+      { url: 'https://www.nytimes.com/2026/11/18/us/politics/senate-vote.html', title: 'Senate Passes  the\nSpending Bill', shares: 12 },
+      { url: 'https://www.nytimes.com/2026/11/18/opinion/trump-tariffs.html', title: 'The Tariffs Aren’t Working', shares: 7 },
+      { url: 'https://www.nytimes.com/2026/11/17/world/europe/ukraine.html', title: 'Ukraine’s Winter Offensive', shares: 1 },
     ];
     const post = buildTopStoriesPost(stories)!;
     assert.strictEqual(post.text, [
       'Top 3 Shared NYT Stories Last Hour:',
-      'nytimes.com/2026/11/18/us/politics/senate-vote.html, 12 shares',
-      'nytimes.com/2026/11/18/opinion/trump-tariffs.html, 7 shares',
-      'nytimes.com/2026/11/17/world/europe/ukraine.html, 1 share',
+      'Senate Passes the Spending Bill, 12 shares',
+      'The Tariffs Aren’t Working, 7 shares',
+      'Ukraine’s Winter Offensive, 1 share',
     ].join('\n'));
     assert.deepStrictEqual(post.facets.map((f) => f.features[0].uri), stories.map((s) => s.url));
+    // Byte offsets: the curly apostrophes take 3 bytes each
     assert.deepStrictEqual(post.facets.map((f) => facetText(post.text, f)), [
-      'nytimes.com/2026/11/18/us/politics/senate-vote.html',
-      'nytimes.com/2026/11/18/opinion/trump-tariffs.html',
-      'nytimes.com/2026/11/17/world/europe/ukraine.html',
+      'Senate Passes the Spending Bill',
+      'The Tariffs Aren’t Working',
+      'Ukraine’s Winter Offensive',
     ]);
     assert.ok(post.facets.every((f) => f.features[0].$type === 'app.bsky.richtext.facet#link'));
   });
 
-  test('shortens long links to stay within the 300-character limit, keeping the full URLs in the links', () => {
+  test('shows the shortened URL for a story without a headline', () => {
+    const stories = [
+      { url: 'https://www.nytimes.com/2026/11/18/us/politics/senate-vote.html?smid=bsky', title: null, shares: 3 },
+      { url: 'https://www.nytimes.com/2026/11/18/us/other.html', title: '   ', shares: 2 },
+    ];
+    const post = buildTopStoriesPost(stories)!;
+    assert.deepStrictEqual(post.facets.map((f) => facetText(post.text, f)), [
+      'nytimes.com/2026/11/18/us/politics/senate-vote.html',
+      'nytimes.com/2026/11/18/us/other.html',
+    ]);
+    assert.strictEqual(post.facets[0].features[0].uri, stories[0].url);
+  });
+
+  test('cuts long headlines short to fit 300 characters, leaving short ones whole', () => {
+    const long = (n: number) => `${'A Very Long Headline About the News of the Day, '.repeat(4)}Part ${n}`;
+    const stories = [
+      { url: 'https://www.nytimes.com/1.html', title: long(1), shares: 30 },
+      { url: 'https://www.nytimes.com/2.html', title: 'Short One', shares: 20 },
+      { url: 'https://www.nytimes.com/3.html', title: long(3), shares: 10 },
+    ];
+    const post = buildTopStoriesPost(stories)!;
+    assert.ok(graphemeCount(post.text) <= POST_MAX_GRAPHEMES, `${graphemeCount(post.text)} graphemes`);
+    const shown = post.facets.map((f) => facetText(post.text, f));
+    assert.strictEqual(shown[1], 'Short One');
+    assert.ok(shown[0].endsWith('…') && shown[2].endsWith('…'), shown.join(' | '));
+    // The space the short headline doesn't use goes to the long ones
+    assert.ok(graphemeCount(post.text) >= POST_MAX_GRAPHEMES - 2, `${graphemeCount(post.text)} graphemes`);
+  });
+
+  test('without headlines, shortens long links to fit 300 characters, keeping the full URLs in the links', () => {
     const slug = 'a-very-long-headline-slug-that-goes-on-and-on-about-the-news-of-the-day';
     const stories = [1, 2, 3].map((n) => ({ url: `https://www.nytimes.com/2026/11/18/us/politics/${slug}-${n}.html?smid=bsky`, shares: 1000 + n }));
     const post = buildTopStoriesPost(stories)!;
