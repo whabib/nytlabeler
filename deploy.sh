@@ -145,6 +145,19 @@ fi
 ENV_VARS="$(printf '%s@@' "${ENV_LIST[@]}")"
 ENV_VARS="^@@^${ENV_VARS%@@}"
 
+# Network flags for the Service and each Job. DATABASE_URL connects through the Cloud SQL
+# connector's socket (/cloudsql/...), so every one of them needs the Cloud SQL instance,
+# with or without VPC egress. (Until 1.10.0 it was only added without a VPC option, so the
+# release deploys, which use --direct-vpc, left a new Job without it.)
+network_flags() {
+  if [ -n "$DIRECT_VPC" ]; then
+    echo "--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only"
+  elif [ -n "$VPC_CONNECTOR" ]; then
+    echo "--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only"
+  fi
+  echo "--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}"
+}
+
 # The base images come from Docker Hardened Images (dhi.io), which needs a Docker login.
 # The token is in Secret Manager (DOCKER_DHI_TOKEN); cloudbuild.yaml logs in with it.
 DHI_USERNAME="${DHI_USERNAME:-$DHI_USERNAME_DEFAULT}"
@@ -182,18 +195,13 @@ DEPLOY_FLAGS=(
   "--no-cpu-throttling"
 )
 
-# VPC Egress settings to reach private IP of Cloud SQL
+# VPC egress, and the Cloud SQL connection (see cloudsql_flags)
 if [ -n "$DIRECT_VPC" ]; then
   echo "🔗 Configuring Direct VPC Egress (Gen 2) on network '${DIRECT_VPC}'..."
-  DEPLOY_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
 elif [ -n "$VPC_CONNECTOR" ]; then
   echo "🔗 Configuring Serverless VPC Access Connector '${VPC_CONNECTOR}'..."
-  DEPLOY_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
-else
-  # Always attach Cloud SQL Auth proxy instance as a reliable alternative
-  echo "🔗 Adding Cloud SQL connection proxy as a fallback integration..."
-  DEPLOY_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
 fi
+DEPLOY_FLAGS+=($(network_flags))
 
 gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
 
@@ -217,14 +225,8 @@ JOB_FLAGS=(
   "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_SIGNING_KEY=BSKY_SIGNING_KEY:${BSKY_SIGNING_KEY_VERSION},BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
 )
 
-# VPC / Cloud SQL connection settings for the Job
-if [ -n "$DIRECT_VPC" ]; then
-  JOB_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
-elif [ -n "$VPC_CONNECTOR" ]; then
-  JOB_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
-else
-  JOB_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
-fi
+# VPC egress and the Cloud SQL connection for the Job
+JOB_FLAGS+=($(network_flags))
 
 # Override container command to execute the taxonomy script instead of main daemon
 JOB_FLAGS+=("--command" "node" "--args" "dist/publish-definitions.js")
@@ -244,13 +246,7 @@ TOP_STORIES_FLAGS=(
   "--max-retries" "0"
   "--task-timeout" "5m"
 )
-if [ -n "$DIRECT_VPC" ]; then
-  TOP_STORIES_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
-elif [ -n "$VPC_CONNECTOR" ]; then
-  TOP_STORIES_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
-else
-  TOP_STORIES_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
-fi
+TOP_STORIES_FLAGS+=($(network_flags))
 TOP_STORIES_FLAGS+=("--command" "node" "--args" "dist/top-stories.js,1h")
 
 gcloud run jobs deploy "${TOP_STORIES_JOB_NAME}" "${TOP_STORIES_FLAGS[@]}"
