@@ -87,6 +87,7 @@ else
 fi
 
 JOB_NAME="${SERVICE_NAME}-job"
+TOP_STORIES_JOB_NAME="${SERVICE_NAME}-top-stories"
 IMAGE_TAG="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
 echo "================================================================"
@@ -94,6 +95,7 @@ echo "🚀 Preparing deployment of NY Times Bluesky Labeler"
 echo "   Target Env   : ${TARGET_ENV} (${APP_ENV})"
 echo "   Service Name : ${SERVICE_NAME}"
 echo "   Job Name     : ${JOB_NAME}"
+echo "   Posting Job  : ${TOP_STORIES_JOB_NAME}"
 echo "   Custom Domain: ${CUSTOM_DOMAIN}"
 echo "   GCP Project  : ${PROJECT_ID}"
 echo "   GCP Region   : ${REGION}"
@@ -229,9 +231,34 @@ JOB_FLAGS+=("--command" "node" "--args" "dist/publish-definitions.js")
 
 gcloud run jobs deploy "${JOB_NAME}" "${JOB_FLAGS[@]}"
 
+# The Job that posts the most shared stories on the account. Its argument is the period
+# (1h by default; 8h, 24h, 7d); each Cloud Scheduler trigger passes its own (see the README).
+# No retries: a run that fails after posting would post again, and skipping one is harmless.
+echo "🚀 Deploying Cloud Run Job: ${TOP_STORIES_JOB_NAME}..."
+TOP_STORIES_FLAGS=(
+  "--image" "${IMAGE_TAG}"
+  "--region" "${REGION}"
+  "--project" "${PROJECT_ID}"
+  "--set-env-vars" "${ENV_VARS}"
+  "--set-secrets" "DATABASE_URL=DATABASE_URL:latest,BSKY_PASSWORD=BSKY_PASSWORD:${BSKY_PASSWORD_VERSION}"
+  "--max-retries" "0"
+  "--task-timeout" "5m"
+)
+if [ -n "$DIRECT_VPC" ]; then
+  TOP_STORIES_FLAGS+=("--network" "$DIRECT_VPC" "--vpc-egress" "private-ranges-only")
+elif [ -n "$VPC_CONNECTOR" ]; then
+  TOP_STORIES_FLAGS+=("--vpc-connector" "$VPC_CONNECTOR" "--vpc-egress" "private-ranges-only")
+else
+  TOP_STORIES_FLAGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE_CONNECTION}")
+fi
+TOP_STORIES_FLAGS+=("--command" "node" "--args" "dist/top-stories.js,1h")
+
+gcloud run jobs deploy "${TOP_STORIES_JOB_NAME}" "${TOP_STORIES_FLAGS[@]}"
+
 echo "================================================================"
 echo "🎉 SUCCESS: Deployment to ${APP_ENV} is complete!"
 echo "🌐 Service URL : ${CUSTOM_DOMAIN}"
 echo "💼 One-shot Job: ${JOB_NAME}"
+echo "📣 Posting Job : ${TOP_STORIES_JOB_NAME}"
 echo "🚀 Run the Job using: gcloud run jobs execute ${JOB_NAME} --region ${REGION}"
 echo "================================================================"

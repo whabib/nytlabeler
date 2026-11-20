@@ -6,6 +6,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 // Point the firehose at a local mock Jetstream BEFORE importing the module
 process.env.FIREHOSE_URL = 'ws://127.0.0.1:14301/subscribe';
 process.env.FIREHOSE_FALLBACK_URLS = 'ws://127.0.0.1:14302/subscribe';
+// The labeler's own account, whose posts it skips
+process.env.BSKY_DID = 'did:plc:labeler-self';
 
 const {
   startFirehoseListener, stopFirehoseListener, configureFirehoseLeadership, releaseFirehoseLeadership, resignFirehoseLeadership, HANDOFF_CHANNEL, RESUME_REWIND_US,
@@ -170,11 +172,11 @@ describe('Firehose leadership', () => {
     clients[clients.length - 1].emit('end');
   }
 
-  function sendNytPost(ws: WebSocket, rkey: string, text = 'Read this https://www.nytimes.com/2026/09/23/us/story.html', timeUs?: number) {
+  function sendNytPost(ws: WebSocket, rkey: string, text = 'Read this https://www.nytimes.com/2026/09/23/us/story.html', timeUs?: number, did = 'did:plc:poster') {
     ws.send(JSON.stringify({
       ...(timeUs === undefined ? {} : { time_us: timeUs }),
       kind: 'commit',
-      did: 'did:plc:poster',
+      did,
       commit: {
         collection: 'app.bsky.feed.post',
         operation: 'create',
@@ -549,6 +551,21 @@ describe('Firehose leadership', () => {
     );
     await waitFor(() => lookups === 2 && created.length > 0);
     await wait(50);
+    assert.deepStrictEqual(created, ['us']);
+  });
+
+  test("skips the labeler's own posts, so its hourly top stories don't count as shares", async () => {
+    lockFree = true;
+    startFirehoseListener();
+    await waitFor(() => open().length === 1 && stats.firehoseConnected);
+
+    created.length = 0;
+    lookups = 0;
+    sendNytPost(open()[0], 'own-post', undefined, undefined, 'did:plc:labeler-self');
+    sendNytPost(open()[0], 'someone-else');
+    await waitFor(() => created.length > 0);
+    await wait(50);
+    assert.strictEqual(lookups, 1, "Only the other account's post is looked up");
     assert.deepStrictEqual(created, ['us']);
   });
 

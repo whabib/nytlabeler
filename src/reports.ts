@@ -32,7 +32,7 @@ export interface PopularArticlesReport {
  * The articles shared in the most posts in one period, most shared first (ties: most
  * recently shared first). Each post counts once per article it links.
  */
-async function popularArticles(interval: string, limit: number): Promise<PopularArticle[]> {
+export async function popularArticles(interval: string, limit: number): Promise<PopularArticle[]> {
   const { rows } = await metricsPool.query(
     `SELECT a.id, a.title, a.url, s.shares,
             COALESCE((SELECT array_agg(au.name ORDER BY au.name)

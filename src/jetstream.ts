@@ -1,6 +1,6 @@
 import pg from 'pg';
 import WebSocket from 'ws';
-import { DATABASE_URL, ENV, FIREHOSE_FALLBACK_URLS, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
+import { DATABASE_URL, DID, ENV, FIREHOSE_FALLBACK_URLS, FIREHOSE_URL, WANTED_COLLECTION } from './config.js';
 import { loadSetting, lookupArticle, normalizeNytUrl, type ArticleMatch } from './database.js';
 import { LeaderElection, type LeaderClient } from './firehose-leader.js';
 import { issueLabelsForPost, stats } from './labeler.js';
@@ -339,6 +339,9 @@ function connect() {
       stats.lastEventTime = new Date().toISOString();
 
       if (dataObj.commit.operation === 'create' && dataObj.commit.record) {
+        // The labeler's own posts (the hourly top stories) link NYT articles too; labeling them
+        // would count each listed story as shared once more every hour
+        if (DID && dataObj.did === DID) return;
         const record = dataObj.commit.record;
         const nytUrls = extractNytUrls(record);
         // NYT accounts mostly post nyti.ms short links; follow them to the article
